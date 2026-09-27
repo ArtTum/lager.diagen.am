@@ -1,6 +1,8 @@
 .env
 .phpunit.result.cache
 /storage/logs/*.log
+/storage/sessions/*.sess
+/storage/sessions/sess_*
 .idea/
 .vscode/
 .DS_Store
