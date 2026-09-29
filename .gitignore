@@ -3,6 +3,16 @@
 /storage/logs/*.log
 /storage/backups/*
 !/storage/backups/.gitkeep
+/migration/.env
+/migration/.env.*
+!/migration/.env.example
+/migration/vendor/
+/migration/node_modules/
+/migration/public/build/
+/migration/storage/framework/cache/data/*
+/migration/storage/framework/sessions/*
+/migration/storage/framework/views/*
+/migration/storage/logs/*.log
 /storage/sessions/*.sess
 /storage/sessions/sess_*
 .idea/
