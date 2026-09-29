@@ -92,7 +92,7 @@ class CatalogController extends Controller
     public function createRole(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'title' => ['required', 'string', 'max:120'],
+            'title' => ['required', 'string', 'max:120', Rule::unique('roles', 'title')],
             'permissions' => ['sometimes', 'array'], 'permissions.*' => ['string', 'distinct', 'exists:permissions,code'],
         ]);
         $roleId = DB::transaction(function () use ($request, $data): int {

@@ -25,7 +25,7 @@ class TransferController extends Controller
 
         $from = (int) $data['from_branch'];
         $to = (int) $data['to_branch'];
-        abort_unless($actor->currentLocationId() === 0 || $actor->branch_id === $from, 403, 'Կարող եք ուղարկել միայն ձեր պահեստից։');
+        abort_unless($actor->currentLocationId() === 0 || (int) $actor->branch_id === $from, 403, 'Կարող եք ուղարկել միայն ձեր պահեստից։');
         $activeBranches = DB::table('branches')->whereIn('id', [$from, $to])->where('active', 1)->count();
         if ($activeBranches !== 2) throw ValidationException::withMessages(['to_branch' => ['Երկու պահեստներն էլ պետք է ակտիվ լինեն։']]);
 
@@ -74,7 +74,7 @@ class TransferController extends Controller
         DB::transaction(function () use ($request, $actor, $transfer): void {
             $record = DB::table('transfers')->where('id', $transfer)->lockForUpdate()->first();
             abort_unless($record && $record->status === 'approved', 409, 'Ուղարկել կարելի է միայն հաստատված տեղափոխումը։');
-            abort_unless($actor->currentLocationId() === 0 || $actor->branch_id === $record->from_branch, 403, 'Կարող եք ուղարկել միայն ձեր աղբյուր պահեստից։');
+            abort_unless($actor->currentLocationId() === 0 || (int) $actor->branch_id === (int) $record->from_branch, 403, 'Կարող եք ուղարկել միայն ձեր աղբյուր պահեստից։');
             $items = DB::table('transfer_items')->where('transfer_id', $transfer)->orderBy('product_id')->get();
             foreach ($items as $item) {
                 $fromLocation = $this->stockLocation((int) $record->from_branch);
