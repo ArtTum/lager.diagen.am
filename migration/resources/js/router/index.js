@@ -5,6 +5,8 @@ import Dashboard from '@/views/dashboard/Index.vue';
 import Suppliers from '@/views/suppliers/Index.vue';
 import PageTable from '@/views/PageTable.vue';
 import CatalogTable from '@/views/CatalogTable.vue';
+import Transfers from '@/views/transfers/Index.vue';
+import Requests from '@/views/requests/Index.vue';
 import ComingSoon from '@/views/ComingSoon.vue';
 
 const routes = [
@@ -19,7 +21,7 @@ const routes = [
         ['returns', 'Վերադարձներ'], ['transfers', 'Տեղափոխումներ'], ['notifications', 'Ծանուցումներ'],
         ['reports', 'Հաշվետվություններ'], ['users', 'Օգտատերեր'], ['roles', 'Դերեր և իրավունքներ'],
         ['audit', 'Գործողությունների պատմություն'],
-    ].map(([path, title]) => ({ path: `/${path}`, component: ['branches', 'products', 'users', 'roles'].includes(path) ? CatalogTable : (['notifications', 'reports'].includes(path) ? ComingSoon : PageTable), meta: { title, permission: `${path}.view` } })),
+    ].map(([path, title]) => ({ path: `/${path}`, component: path === 'transfers' ? Transfers : path === 'requests' ? Requests : (['branches', 'products', 'users', 'roles'].includes(path) ? CatalogTable : (['notifications', 'reports'].includes(path) ? ComingSoon : PageTable)), meta: { title, permission: `${path}.view` } })),
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
 ];
 
