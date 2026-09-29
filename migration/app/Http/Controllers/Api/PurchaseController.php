@@ -62,6 +62,7 @@ class PurchaseController extends Controller
 
     public function receive(Request $request):JsonResponse
     {
+        abort_unless($request->user()->role?->name === 'admin' || $request->user()->currentLocationId() === 0, 403, 'Գնումների մուտքը գրանցվում է կենտրոնական պահեստում։');
         $data=$request->validate([
             'purchase_order_id'=>['required','integer','exists:purchase_orders,id'],'received_on'=>['required','date_format:Y-m-d'],
             'invoice_no'=>['nullable','string','max:100'],'contract_no'=>['nullable','string','max:100'],'note'=>['nullable','string','max:2000'],

@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\CatalogController;
 use App\Http\Controllers\Api\PageDataController;
 use App\Http\Controllers\Api\RequestController;
+use App\Http\Controllers\Api\PurchaseController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TransferController;
 use Illuminate\Support\Facades\Route;
@@ -45,6 +46,11 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function (): void {
     Route::post('/requests/{stockRequest}/review', [RequestController::class, 'review'])->middleware('permission:requests.approve');
     Route::post('/requests/{stockRequest}/{action}', [RequestController::class, 'transition'])->middleware('permission:requests.edit');
     Route::get('/catalog/requests/options', [CatalogController::class, 'options'])->defaults('kind', 'transfers')->middleware('permission:requests.view');
+    Route::get('/purchasing/purchases/options', [PurchaseController::class, 'options'])->defaults('kind', 'purchases')->middleware('permission:purchases.view');
+    Route::get('/purchasing/receipts/options', [PurchaseController::class, 'options'])->defaults('kind', 'receipts')->middleware('permission:receipts.view');
+    Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create');
+    Route::post('/purchases/{order}/approve', [PurchaseController::class, 'approve'])->middleware('permission:purchases.approve');
+    Route::post('/receipts', [PurchaseController::class, 'receive'])->middleware('permission:receipts.create');
 
     foreach (['branches', 'products', 'users'] as $kind) {
         Route::get('/catalog/'.$kind.'/options', [CatalogController::class, 'options'])
