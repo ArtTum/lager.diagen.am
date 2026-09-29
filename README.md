@@ -42,3 +42,43 @@
    ```
 
    Տեղային միջավայրում վեբ հավելվածն ավտոմատ միանում է WS_HOST:WS_PORT հասցեին։ Արտադրական HTTPS միջավայրում .env-ում սահմանեք WS_PUBLIC_URL=wss://ձեր-տիրույթը/ws և reverse proxy-ով /ws ուղին փոխանցեք 127.0.0.1:8096 հասցեին՝ միացնելով WebSocket Upgrade վերնագրերը։ Ծանուցումները թարմացվում են audit մատյանի նոր գրառումից հետո, իսկ ձայնը միացվում է վերևի զանգի պատկերակին առաջին սեղմումով։
+
+## Backup, restore և տեղակայման ստուգումներ
+
+PHP CLI-ից գործարկեք մատակարարների լրացման հաշվետվությունը։ Այն ցույց է տալիս միայն բացակայող դաշտերի քանակները, ոչ անուններ կամ կապի տվյալներ.
+
+```powershell
+php tools/supplier-data-audit.php
+```
+
+Գաղտնագրված ամբողջական բազայի պահուստ ստեղծելու համար passphrase-ը մուտքագրեք PowerShell-ի թաքնված հուշումով։ Օգտագործեք առնվազն 16 նիշանոց գաղտնաբառ, պահեք այն առանձին և կորցնելու դեպքում backup-ը հնարավոր չի լինի բացել.
+
+```powershell
+$secret = Read-Host "Backup passphrase" -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+  $env:DIAGEN_BACKUP_PASSPHRASE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  php tools/db-backup.php
+} finally {
+  $env:DIAGEN_BACKUP_PASSPHRASE = $null
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+```
+
+Backup ֆայլը ստեղծվում է `storage/backups/` պանակում՝ `.dgbk` վերջավորությամբ, AES-256-GCM գաղտնագրմամբ և PBKDF2 բանալիով։ Պանակը `public/`-ից դուրս է և git-ում անտեսված է։ Արտադրական սերվերում սահմանափակեք այդ պանակի Windows/Linux ACL-ը միայն պահուստների սպասարկող հաշիվներին, իսկ երկրորդ պատճենը պահեք սերվերից դուրս։ Կոդը պարբերական գործարկում չի կարգավորում․ ստեղծեք Task Scheduler/cron առաջադրանք և վերահսկեք դրա արդյունքը։
+
+Վերականգնումը միտումնավոր թույլատրվում է միայն նախապես ստեղծված, դատարկ `diagen_restore_...` բազայում։ Սկզբում այդ բազան ստեղծեք և տվեք նույն DB օգտվողին անհրաժեշտ իրավունքները։ Փոխարինեք ֆայլի անունը ձեր backup-ով.
+
+```powershell
+$secret = Read-Host "Backup passphrase" -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+  $env:DIAGEN_BACKUP_PASSPHRASE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  php tools/db-restore.php storage/backups/lager-YYYYMMDD-HHMMSS.dgbk diagen_restore_check1
+} finally {
+  $env:DIAGEN_BACKUP_PASSPHRASE = $null
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+}
+```
+
+Ստուգեք վերականգնված տվյալներն ու աղյուսակների քանակները մինչև արտադրական անցումը։ Այս գործիքները չեն ջնջում կամ փոխում գործող բազան և ինքնուրույն չեն փոխում `.env`-ը։ Մեծ բազաների համար նախ ստուգեք PHP `memory_limit`-ը․ ներկայիս արտահանիչը տվյալների snapshot-ը հավաքում է հիշողության մեջ։

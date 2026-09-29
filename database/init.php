@@ -18,10 +18,23 @@ foreach ([
  'suppliers'=>['bank_details'=>'VARCHAR(255) NULL AFTER email','contract_start'=>'DATE NULL AFTER contract_no','contract_end'=>'DATE NULL AFTER contract_start'],
  'categories'=>['parent_id'=>'BIGINT UNSIGNED NULL AFTER name'],
  'products'=>['barcode'=>'VARCHAR(100) NULL AFTER code','subcategory'=>'VARCHAR(120) NULL AFTER category_id','supplier_id'=>'BIGINT UNSIGNED NULL AFTER category_id','purchase_price'=>'DECIMAL(14,2) NOT NULL DEFAULT 0 AFTER supplier_id'],
+ 'stock_requests'=>['sent_by'=>'BIGINT UNSIGNED NULL AFTER reviewed_by','received_by'=>'BIGINT UNSIGNED NULL AFTER sent_by'],
+ 'transfers'=>['shipped_by'=>'BIGINT UNSIGNED NULL AFTER approved_by','received_by'=>'BIGINT UNSIGNED NULL AFTER shipped_by'],
+ 'inventory_lines'=>['counted_lot_no'=>'VARCHAR(100) NULL AFTER difference_reason','counted_expires_on'=>'DATE NULL AFTER counted_lot_no','counted_supplier_id'=>'BIGINT UNSIGNED NULL AFTER counted_expires_on','counted_bin_location'=>'VARCHAR(100) NULL AFTER counted_supplier_id','counted_unit_cost'=>'DECIMAL(14,2) NULL AFTER counted_bin_location'],
 ] as $table=>$columns) foreach ($columns as $column=>$definition) {
     $check=$pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');
     $check->execute([$table,$column]);
     if (!(int)$check->fetchColumn()) $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+}
+$inventorySupplierFk=$pdo->query("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='inventory_lines' AND CONSTRAINT_NAME='fk_inventory_lines_counted_supplier'")->fetchColumn();
+if (!(int)$inventorySupplierFk) $pdo->exec('ALTER TABLE inventory_lines ADD CONSTRAINT fk_inventory_lines_counted_supplier FOREIGN KEY(counted_supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL');
+foreach ([
+ 'stock_requests'=>['sent_by'=>'fk_stock_requests_sent_by','received_by'=>'fk_stock_requests_received_by'],
+ 'transfers'=>['shipped_by'=>'fk_transfers_shipped_by','received_by'=>'fk_transfers_received_by'],
+] as $table=>$constraints) foreach ($constraints as $column=>$constraint) {
+    $check=$pdo->prepare('SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME=?');
+    $check->execute([$table,$constraint]);
+    if (!(int)$check->fetchColumn()) $pdo->exec("ALTER TABLE `$table` ADD CONSTRAINT `$constraint` FOREIGN KEY(`$column`) REFERENCES users(id) ON DELETE SET NULL");
 }
 $barcodeIndex=$pdo->query("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='products' AND INDEX_NAME='uq_products_barcode'")->fetchColumn();
 if (!(int)$barcodeIndex) $pdo->exec('CREATE UNIQUE INDEX uq_products_barcode ON products(barcode)');
@@ -44,6 +57,19 @@ $returnIndex=$pdo->prepare('SELECT COUNT(*) FROM information_schema.STATISTICS W
 $returnIndex->execute();
 if ((int)$returnIndex->fetchColumn()) $pdo->exec('ALTER TABLE returns DROP INDEX return_no, ADD INDEX return_no (return_no)');
 
+// Keep posted movement corrections append-only, and make the audit log immutable at the database layer.
+$auditTriggers = [
+ 'trg_audit_logs_block_update' => "CREATE TRIGGER trg_audit_logs_block_update BEFORE UPDATE ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Audit records cannot be changed'",
+ 'trg_audit_logs_block_delete' => "CREATE TRIGGER trg_audit_logs_block_delete BEFORE DELETE ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Audit records cannot be deleted'",
+ 'trg_movement_corrections_block_update' => "CREATE TRIGGER trg_movement_corrections_block_update BEFORE UPDATE ON movement_corrections FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Movement corrections cannot be changed'",
+ 'trg_movement_corrections_block_delete' => "CREATE TRIGGER trg_movement_corrections_block_delete BEFORE DELETE ON movement_corrections FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Movement corrections cannot be deleted'",
+];
+foreach ($auditTriggers as $triggerName => $triggerSql) {
+ $check = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=?');
+ $check->execute([$triggerName]);
+ if (!(int)$check->fetchColumn()) $pdo->exec($triggerSql);
+}
+
 $modules=[
  'dashboard'=>'Գլխավոր վահանակ', 'suppliers'=>'Մատակարարներ', 'products'=>'Ապրանքներ', 'branches'=>'Մասնաճյուղեր',
  'purchases'=>'Գնումների պատվերներ', 'receipts'=>'Մուտքեր և գնումներ', 'stock'=>'Մնացորդներ', 'requests'=>'Պահանջագրեր', 'movements'=>'Պահեստի շարժ',
@@ -63,13 +89,13 @@ $allPerms=array_flip($pdo->query('SELECT id,code FROM permissions')->fetchAll(PD
 $sets=[
  'admin'=>array_keys($allPerms),
  'manager'=>array_values(array_filter(array_keys($allPerms),fn($p)=>!str_ends_with($p,'.delete') && !in_array($p,['users.create','users.edit','roles.edit'],true))),
- 'storekeeper'=>array_values(array_filter(array_keys($allPerms),fn($p)=>in_array(explode('.',$p)[0],['dashboard','stock','receipts','purchases','requests','movements','inventory','expiry','returns','transfers','notifications','reports'],true) && !str_ends_with($p,'.delete') && !str_ends_with($p,'.approve'))),
+ 'storekeeper'=>array_values(array_filter(array_keys($allPerms),fn($p)=>in_array(explode('.',$p)[0],['dashboard','products','stock','receipts','purchases','requests','movements','inventory','expiry','returns','transfers','notifications','reports'],true) && !str_ends_with($p,'.delete') && !str_ends_with($p,'.approve') && !in_array($p,['products.create','products.edit'],true))),
  'branch'=>array_values(array_filter(array_keys($allPerms),fn($p)=>in_array(explode('.',$p)[0],['dashboard','stock','requests','movements','inventory','expiry','returns','transfers','notifications','reports'],true) && !str_ends_with($p,'.delete') && !in_array($p,['requests.approve','transfers.approve'],true))),
- 'finance'=>array_values(array_filter(array_keys($allPerms),fn($p)=>in_array(explode('.',$p)[0],['dashboard','suppliers','products','purchases','receipts','stock','movements','expiry','returns','reports'],true) && (str_ends_with($p,'.view') || in_array($p,['purchases.approve','receipts.create'],true)))),
+ 'finance'=>array_values(array_filter(array_keys($allPerms),fn($p)=>in_array(explode('.',$p)[0],['dashboard','suppliers','products','purchases','receipts','stock','movements','expiry','returns','reports'],true) && (str_ends_with($p,'.view') || $p==='purchases.approve'))),
  'viewer'=>array_values(array_filter(array_keys($allPerms),fn($p)=>str_ends_with($p,'.view') || $p==='dashboard.view')),
 ];
 foreach($sets as $role=>$codes) foreach($codes as $code) if(isset($allPerms[$code])) { $q=$pdo->prepare('INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES(?,?)');$q->execute([$roleIds[$role],$allPerms[$code]]); }
-foreach(['manager'=>['users.create'],'branch'=>['requests.approve','transfers.approve','inventory.approve']] as $role=>$revoked){$remove=$pdo->prepare('DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code=?');foreach($revoked as $code)$remove->execute([$roleIds[$role],$code]);}
+foreach(['manager'=>['users.create'],'branch'=>['requests.approve','transfers.approve','inventory.approve','stock.edit']] as $role=>$revoked){$remove=$pdo->prepare('DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code=?');foreach($revoked as $code)$remove->execute([$roleIds[$role],$code]);}
 
 $hasAdmin=(int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn()===0;
 if($hasAdmin) {

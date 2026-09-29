@@ -13,6 +13,16 @@ function closeModal(id) {
     if (!document.querySelector('.modal-backdrop:not([hidden])')) document.body.classList.remove('modal-open');
 }
 
+function openMovementCorrection(id, documentNo, itemLabel) {
+    const modal = document.getElementById('movement-correction-modal');
+    const movementId = document.getElementById('movement-correction-id');
+    const caption = document.getElementById('movement-correction-caption');
+    if (!modal || !movementId || !caption) return;
+    movementId.value = String(id);
+    caption.textContent = `${documentNo} · ${itemLabel}`;
+    openModal('movement-correction-modal');
+}
+
 // A single Armenian confirmation dialog for destructive and irreversible actions.
 let activeConfirmation = null;
 let confirmedSubmission = null;
@@ -226,6 +236,7 @@ document.addEventListener('keydown', (event) => {
 
 function initPaginatedLists() {
     const pageSizeDefault = 25;
+    const alwaysShowPagination = new URLSearchParams(window.location.search).get('page') === 'movements';
     const externalSearches = [...document.querySelectorAll('[data-table-search]')];
     const usedSearches = new Set();
 
@@ -249,7 +260,7 @@ function initPaginatedLists() {
         if (search) usedSearches.add(search);
         const footer = document.createElement('div');
         footer.className = 'list-pagination';
-        footer.innerHTML = '<span class="list-pagination-count" aria-live="polite"></span><div class="list-pagination-controls"><label>Տողեր՝ <select aria-label="Տողերի քանակը մեկ էջում"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label><button type="button" class="secondary-button" data-page-prev aria-label="Նախորդ էջ">‹</button><span class="list-pagination-page" aria-live="polite"></span><button type="button" class="secondary-button" data-page-next aria-label="Հաջորդ էջ">›</button></div>';
+        footer.innerHTML = '<span class="list-pagination-count" aria-live="polite"></span><div class="list-pagination-controls"><label>Տողեր՝ <select aria-label="Տողերի քանակը մեկ էջում"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label><button type="button" class="secondary-button" data-page-prev aria-label="Նախորդ էջ">‹</button><span class="list-pagination-page" aria-live="polite"></span><button type="button" class="secondary-button" data-page-next aria-label="Հաջորդ էջ">›</button></div>';
         card.append(footer);
         const count = footer.querySelector('.list-pagination-count');
         const pageText = footer.querySelector('.list-pagination-page');
@@ -272,7 +283,7 @@ function initPaginatedLists() {
             pageText.textContent = `${page} / ${pages}`;
             prev.disabled = page <= 1;
             next.disabled = page >= pages;
-            const showPages = matching.length > pageSizeDefault;
+            const showPages = matching.length > pageSizeDefault || alwaysShowPagination;
             sizeSelect.closest('label').hidden = !showPages;
             prev.hidden = !showPages;
             next.hidden = !showPages;
@@ -623,7 +634,7 @@ document.querySelectorAll('.table-action, .danger-link').forEach((button) => {
 
 const navigationIcons = {
     dashboard: 'M3 3h8v8H3zM13 3h8v5h-8zM13 10h8v11h-8zM3 13h8v8H3z',
-    suppliers: 'M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m12-13a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm3 3a4 4 0 0 1 0 8m2 2v-2a4 4 0 0 0-3-3.87',
+    suppliers: 'M3 10h18v11H3zM2 10l2-6h16l2 6M8 14h8m-6 7v-4h4v4',
     products: 'm12 3 9 5-9 5-9-5 9-5Zm-9 5v8l9 5 9-5V8m-9 5v8',
     branches: 'M3 21h18M5 21V5l7-3 7 3v16M9 9h.01M15 9h.01M9 13h.01M15 13h.01M10 21v-4h4v4',
     purchases: 'M6 3h12l2 4v14H4V7l2-4Zm-2 4h16M9 11h6m-6 4h6',
@@ -708,7 +719,111 @@ if (mobileSidebar && mobileTopbar) {
         const collapsed = document.body.classList.toggle('sidebar-collapsed');
         localStorage.setItem('diagen-sidebar-collapsed', String(collapsed));
         syncCollapseToggle();
+        closeSidebarFlyout();
+        if (!collapsed) mobileSidebar.querySelectorAll('.nav-group-title').forEach((summary) => summary.removeAttribute('aria-expanded'));
     });
+
+    // Keep grouped destinations reachable when the sidebar is reduced to icons.
+    const sidebarFlyout = document.createElement('div');
+    sidebarFlyout.className = 'sidebar-nav-flyout';
+    sidebarFlyout.hidden = true;
+    sidebarFlyout.setAttribute('role', 'menu');
+    sidebarFlyout.setAttribute('aria-label', 'Բաժնի ենթամենյու');
+    document.body.appendChild(sidebarFlyout);
+    let activeFlyoutSummary = null;
+    let flyoutCloseTimer = null;
+
+    function cancelFlyoutClose() {
+        if (flyoutCloseTimer !== null) {
+            window.clearTimeout(flyoutCloseTimer);
+            flyoutCloseTimer = null;
+        }
+    }
+
+    function scheduleFlyoutClose() {
+        cancelFlyoutClose();
+        flyoutCloseTimer = window.setTimeout(() => {
+            flyoutCloseTimer = null;
+            closeSidebarFlyout();
+        }, 350);
+    }
+
+    function closeSidebarFlyout(returnFocus = false) {
+        cancelFlyoutClose();
+        if (activeFlyoutSummary) {
+            activeFlyoutSummary.setAttribute('aria-expanded', 'false');
+            if (returnFocus) activeFlyoutSummary.focus();
+        }
+        activeFlyoutSummary = null;
+        sidebarFlyout.hidden = true;
+        sidebarFlyout.replaceChildren();
+    }
+
+    function openSidebarFlyout(summary, toggle = false) {
+        const group = summary.closest('.nav-group');
+        const items = group?.querySelector('.nav-group-items');
+        if (!group || !items) return;
+        if (toggle && activeFlyoutSummary === summary && !sidebarFlyout.hidden) {
+            closeSidebarFlyout();
+            return;
+        }
+        cancelFlyoutClose();
+        if (activeFlyoutSummary === summary && !sidebarFlyout.hidden) return;
+        closeSidebarFlyout();
+        activeFlyoutSummary = summary;
+        summary.setAttribute('aria-expanded', 'true');
+        sidebarFlyout.setAttribute('aria-label', `${summary.querySelector('.nav-group-label')?.textContent.trim() || 'Բաժին'} ենթամենյու`);
+        items.querySelectorAll('.nav-item').forEach((link) => {
+            const flyoutLink = link.cloneNode(true);
+            flyoutLink.setAttribute('role', 'menuitem');
+            sidebarFlyout.appendChild(flyoutLink);
+        });
+        if (!sidebarFlyout.childElementCount) return closeSidebarFlyout();
+        sidebarFlyout.hidden = false;
+        const bounds = summary.getBoundingClientRect();
+        const flyoutBounds = sidebarFlyout.getBoundingClientRect();
+        const flyoutHeight = Math.min(flyoutBounds.height, window.innerHeight - 24);
+        const left = Math.max(12, Math.min(bounds.right + 10, window.innerWidth - flyoutBounds.width - 12));
+        const top = Math.max(12, Math.min(bounds.top, window.innerHeight - flyoutHeight - 12));
+        sidebarFlyout.style.left = `${Math.round(left)}px`;
+        sidebarFlyout.style.top = `${Math.round(top)}px`;
+    }
+
+    mobileSidebar.querySelectorAll('.nav-group-title').forEach((summary) => {
+        const label = summary.querySelector('.nav-group-label')?.textContent.trim();
+        if (label) summary.title = label;
+        summary.setAttribute('aria-haspopup', 'menu');
+        summary.addEventListener('pointerenter', () => {
+            if (!document.body.classList.contains('sidebar-collapsed') || window.innerWidth <= 960 || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+            openSidebarFlyout(summary);
+        });
+        summary.addEventListener('pointerleave', () => {
+            if (activeFlyoutSummary === summary && window.matchMedia('(hover: hover) and (pointer: fine)').matches) scheduleFlyoutClose();
+        });
+        summary.addEventListener('click', (event) => {
+            if (!document.body.classList.contains('sidebar-collapsed') || window.innerWidth <= 960) {
+                closeSidebarFlyout();
+                summary.removeAttribute('aria-expanded');
+                return;
+            }
+            event.preventDefault();
+            // Pointer hover may already have opened this menu before its click fires.
+            openSidebarFlyout(summary, event.detail === 0);
+        });
+    });
+    sidebarFlyout.addEventListener('pointerenter', cancelFlyoutClose);
+    sidebarFlyout.addEventListener('pointerleave', () => {
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) scheduleFlyoutClose();
+    });
+    document.addEventListener('click', (event) => {
+        if (sidebarFlyout.hidden || sidebarFlyout.contains(event.target) || event.target.closest?.('.nav-group-title')) return;
+        closeSidebarFlyout();
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !sidebarFlyout.hidden) closeSidebarFlyout(true);
+    });
+    mobileSidebar.querySelector('.nav-list')?.addEventListener('scroll', () => closeSidebarFlyout());
+    window.addEventListener('resize', () => closeSidebarFlyout());
 
     const scrim = document.createElement('button');
     scrim.type = 'button';
@@ -861,6 +976,30 @@ notificationButton?.addEventListener('click', (event) => {
     setPopover(notificationPopover.hidden);
 });
 
+document.addEventListener('click', async (event) => {
+    const link = event.target.closest?.('[data-notice-key]');
+    if (!link || !link.href || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !/^[a-f0-9]{40}$/.test(link.dataset.noticeKey || '')) return;
+    event.preventDefault();
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const body = new URLSearchParams({
+        notification_action: 'read',
+        notification_key: link.dataset.noticeKey,
+        _token: token,
+    });
+    try {
+        const response = await fetch(window.location.pathname + '?page=notifications', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'Accept': 'application/json' },
+            body,
+        });
+        if (response.ok) link.classList.add('is-read');
+    } catch (_) {
+        // The alert remains navigable when a read receipt cannot be saved.
+    }
+    window.location.assign(link.href);
+}, true);
+
 document.addEventListener('click', (event) => {
     if (notificationPopover && !notificationPopover.hidden && !event.target.closest('.notification-center')) setPopover(false);
 });
@@ -892,31 +1031,47 @@ function playNotificationSound() {
     });
 }
 
-function unlockSound() {
-    if (!soundEnabled || audioContext) return;
+async function unlockSound() {
+    if (!soundEnabled) return false;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    audioContext = new AudioContextClass();
-    audioContext.resume().catch(() => {});
-    if (soundUnlockHandler) {
-        document.removeEventListener('pointerdown', soundUnlockHandler);
-        document.removeEventListener('keydown', soundUnlockHandler);
-        soundUnlockHandler = null;
+    if (!AudioContextClass) return false;
+    try {
+        audioContext ||= new AudioContextClass();
+        if (audioContext.state !== 'running') await audioContext.resume();
+        const ready = audioContext.state === 'running';
+        if (ready && soundUnlockHandler) {
+            document.removeEventListener('pointerdown', soundUnlockHandler);
+            document.removeEventListener('keydown', soundUnlockHandler);
+            soundUnlockHandler = null;
+        }
+        return ready;
+    } catch (_) {
+        return false;
     }
 }
 
-soundButton?.addEventListener('click', () => {
+soundButton?.addEventListener('click', async () => {
     soundEnabled = !soundEnabled;
     localStorage.setItem('diagen-notification-sound', soundEnabled ? 'on' : 'off');
     updateSoundButton();
-    if (soundEnabled) unlockSound();
+    if (soundEnabled) {
+        if (await unlockSound()) playNotificationSound();
+        else {
+            soundEnabled = false;
+            localStorage.setItem('diagen-notification-sound', 'off');
+            updateSoundButton();
+            soundButton.title = 'Ձայնը հասանելի չէ այս դիտարկչում';
+        }
+    }
 });
 
 updateSoundButton();
 if (soundEnabled) {
-    soundUnlockHandler = unlockSound;
-    document.addEventListener('pointerdown', soundUnlockHandler, { once: true });
-    document.addEventListener('keydown', soundUnlockHandler, { once: true });
+    soundUnlockHandler = async () => {
+        if (await unlockSound()) playNotificationSound();
+    };
+    document.addEventListener('pointerdown', soundUnlockHandler);
+    document.addEventListener('keydown', soundUnlockHandler);
 }
 
 function showNotificationToast(item) {
@@ -946,8 +1101,9 @@ function renderNotifications(payload, announce = false) {
         seenNotifications.add(signature);
 
         const link = document.createElement('a');
-        link.className = 'notification-item';
+        link.className = `notification-item${item.read ? ' is-read' : ''}`;
         link.href = item.link;
+        link.dataset.noticeKey = signature;
         const tone = document.createElement('span');
         tone.className = `notification-tone ${item.tone || 'blue'}`;
         const copy = document.createElement('span');
@@ -1006,6 +1162,18 @@ document.querySelector('.topbar-right')?.prepend(liveStatus);
 
 let notificationsRefreshTimer = null;
 let pageRefreshTimer = null;
+let notificationFallbackTimer = null;
+function startNotificationFallback() {
+    if (!notificationButton || notificationFallbackTimer) return;
+    notificationFallbackTimer = window.setInterval(() => {
+        if (!document.hidden) refreshNotifications(true);
+    }, 30000);
+}
+startNotificationFallback();
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshNotifications(true);
+});
+
 function showRefreshPrompt() {
     let toast = document.querySelector('.live-refresh-toast');
     if (toast) return;
@@ -1094,20 +1262,29 @@ connectRealtime();
 const pageKey = new URLSearchParams(window.location.search).get('page') || 'dashboard';
 const exportPages = {
     stock: 'Ընդհանուր մնացորդ',
+    products: 'Ապրանքների տվյալներ',
     expiry: 'Ժամկետների տվյալներ',
     requests: 'Պահանջագրերի տվյալներ',
     returns: 'Վերադարձների տվյալներ',
     inventory: 'Գույքագրման տվյալներ',
+    receipts: 'Մուտքերի տվյալներ',
+    purchases: 'Գնումների տվյալներ',
+    movements: 'Պահեստի շարժեր',
 };
 const pageHeadingNode = document.querySelector('.page-heading');
 if (pageHeadingNode && exportPages[pageKey]) {
     const toolbar = document.createElement('div');
     toolbar.className = 'report-export-toolbar';
-    const link = document.createElement('a');
-    link.className = 'secondary-button';
-    link.href = `?page=${encodeURIComponent(pageKey)}&export=csv`;
-    link.textContent = `Ներբեռնել CSV · ${exportPages[pageKey]}`;
-    toolbar.appendChild(link);
+    for (const format of ['csv', 'xlsx']) {
+        const link = document.createElement('a');
+        link.className = 'secondary-button';
+        const exportUrl = new URL(window.location.href);
+        exportUrl.searchParams.set('page', pageKey);
+        exportUrl.searchParams.set('export', format);
+        link.href = exportUrl.toString();
+        link.textContent = `${format === 'xlsx' ? 'Ներբեռնել Excel' : 'Ներբեռնել CSV'} · ${exportPages[pageKey]}`;
+        toolbar.appendChild(link);
+    }
     pageHeadingNode.after(toolbar);
 }
 if (pageHeadingNode && pageKey === 'reports') {
@@ -1124,6 +1301,17 @@ if (pageHeadingNode && pageKey === 'reports') {
         window.print();
     });
     toolbar.append(note, print);
+    for (const [label, report] of [['Ծախսեր', 'branch_expense'], ['Միջին սպառում', 'average_usage']]) {
+        const link = document.createElement('a');
+        link.className = 'secondary-button';
+        const exportUrl = new URL(window.location.href);
+        exportUrl.searchParams.set('page', 'reports');
+        exportUrl.searchParams.set('export', report);
+        exportUrl.searchParams.set('format', 'xlsx');
+        link.href = exportUrl.toString();
+        link.textContent = `Excel · ${label}`;
+        toolbar.appendChild(link);
+    }
     pageHeadingNode.after(toolbar);
 
 
@@ -1136,13 +1324,51 @@ if (pageCreateButton) {
     pageCreateButton.classList.add('page-create-action');
 }
 
+function nextItemRowIndex(wrap){
+ const used=[...wrap.querySelectorAll('[name^="items["]')].map(field=>Number((field.name.match(/^items\[(\d+)\]/)||[])[1])).filter(Number.isInteger);
+ return used.length?Math.max(...used)+1:0;
+}
+
 function addTransferLine(){
- const wrap=document.getElementById('transfer-lines');if(!wrap)return;const index=wrap.querySelectorAll('.transfer-line').length;const first=wrap.querySelector('select[name^="items["]');if(!first)return;const row=document.createElement('div');row.className='transfer-line';const product=document.createElement('label');product.textContent='Ապրանք';const select=first.cloneNode(true);select.name='items['+index+'][product_id]';select.required=true;select.value='';product.append(select);const qty=document.createElement('label');qty.textContent='Քանակ';const input=document.createElement('input');input.name='items['+index+'][qty]';input.type='number';input.min='0.001';input.step='0.001';input.required=true;qty.append(input);const remove=document.createElement('button');remove.type='button';remove.className='icon-button';remove.setAttribute('aria-label','Հեռացնել տողը');remove.textContent='×';remove.addEventListener('click',()=>row.remove());row.append(product,qty,remove);wrap.append(row);
+ const wrap=document.getElementById('transfer-lines');if(!wrap)return;const index=nextItemRowIndex(wrap);const first=wrap.querySelector('select[name^="items["]');if(!first)return;const row=document.createElement('div');row.className='transfer-line';const product=document.createElement('label');product.textContent='Ապրանք';const select=first.cloneNode(true);select.name='items['+index+'][product_id]';select.required=true;select.value='';product.append(select);const qty=document.createElement('label');qty.textContent='Քանակ';const input=document.createElement('input');input.name='items['+index+'][qty]';input.type='number';input.min='0.001';input.step='0.001';input.required=true;qty.append(input);const remove=document.createElement('button');remove.type='button';remove.className='icon-button';remove.setAttribute('aria-label','Հեռացնել տողը');remove.textContent='×';remove.addEventListener('click',()=>row.remove());row.append(product,qty,remove);wrap.append(row);
 }
 
 function addReturnLine(){
- const wrap=document.getElementById('return-lines');if(!wrap)return;const index=wrap.querySelectorAll('.return-line').length;const first=wrap.querySelector('select[name^="items["]');if(!first)return;const row=document.createElement('div');row.className='return-line';const product=document.createElement('label');product.textContent='Ապրանք';const select=first.cloneNode(true);select.name='items['+index+'][product_id]';select.required=true;select.value='';product.append(select);const qty=document.createElement('label');qty.textContent='Քանակ';const input=document.createElement('input');input.name='items['+index+'][qty]';input.type='number';input.min='0.001';input.step='0.001';input.required=true;qty.append(input);const remove=document.createElement('button');remove.type='button';remove.className='icon-button';remove.setAttribute('aria-label','Հեռացնել տողը');remove.textContent='×';remove.addEventListener('click',()=>row.remove());row.append(product,qty,remove);wrap.append(row);
+ const wrap=document.getElementById('return-lines');if(!wrap)return;const index=nextItemRowIndex(wrap);const first=wrap.querySelector('select[name^="items["]');if(!first)return;const row=document.createElement('div');row.className='return-line';const product=document.createElement('label');product.textContent='Ապրանք';const select=first.cloneNode(true);select.name='items['+index+'][product_id]';select.required=true;select.value='';product.append(select);const qty=document.createElement('label');qty.textContent='Քանակ';const input=document.createElement('input');input.name='items['+index+'][qty]';input.type='number';input.min='0.001';input.step='0.001';input.required=true;qty.append(input);const remove=document.createElement('button');remove.type='button';remove.className='icon-button';remove.setAttribute('aria-label','Հեռացնել տողը');remove.textContent='×';remove.addEventListener('click',()=>row.remove());row.append(product,qty,remove);wrap.append(row);
 }
+
+function syncReceiptOrderOptions(){
+ const selects=[...document.querySelectorAll('#receipt-lines select[name$="[purchase_order_item_id]"]')];
+ const selectedOrders=selects.map(select=>select.selectedOptions[0]?.dataset.order).filter(Boolean);
+ const orderId=selectedOrders[0]||'';
+ selects.forEach(select=>{
+  [...select.options].forEach(option=>{option.disabled=Boolean(orderId&&option.dataset.order&&option.dataset.order!==orderId)});
+  if(select.value&&select.selectedOptions[0]?.disabled)select.value='';
+ });
+}
+
+function addReceiptLine(){
+ const wrap=document.getElementById('receipt-lines');if(!wrap)return;
+ const first=wrap.querySelector('.receipt-line');if(!first)return;
+ const index=nextItemRowIndex(wrap);
+ const row=document.createElement('div');row.className='receipt-line';
+ const productLabel=document.createElement('label');productLabel.textContent='Հաստատված պատվերի ապրանք';
+ const productSelect=first.querySelector('select').cloneNode(true);productSelect.name='items['+index+'][purchase_order_item_id]';productSelect.value='';productSelect.required=true;productLabel.append(productSelect);row.append(productLabel);
+ [['Ստացված քանակ','qty','number','0.001'],['LOT / սերիա','lot_no','text',''],['Պիտանի է մինչև','expires_on','date',''],['Պահեստային տեղ','bin_location','text','']].forEach(([labelText,key,type,min])=>{
+  const label=document.createElement('label');label.textContent=labelText;
+  const input=document.createElement('input');input.name='items['+index+']['+key+']';input.type=type;
+  if(type==='number'){input.min=min;input.step='0.001';input.required=true}if(key==='lot_no'){input.maxLength=100;input.required=true}if(key==='bin_location')input.maxLength=100;
+  label.append(input);row.append(label);
+ });
+ const remove=document.createElement('button');remove.type='button';remove.className='icon-button receipt-line-remove';remove.setAttribute('aria-label','Հեռացնել ապրանքի տողը');remove.textContent='×';remove.addEventListener('click',()=>{row.remove();syncReceiptOrderOptions()});
+ row.append(remove);wrap.append(row);syncReceiptOrderOptions();
+}
+
+document.getElementById('receipt-add-line')?.addEventListener('click',addReceiptLine);
+document.getElementById('receipt-lines')?.addEventListener('change',event=>{
+ if(event.target.matches('select[name$="[purchase_order_item_id]"]'))syncReceiptOrderOptions();
+});
+syncReceiptOrderOptions();
 
 const barcodeScanForm = document.querySelector('.product-barcode-search');
 const barcodeCameraOpen = document.getElementById('barcode-camera-open');
