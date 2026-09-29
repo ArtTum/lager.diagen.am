@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\PageDataController;
 use App\Http\Controllers\Api\RequestController;
 use App\Http\Controllers\Api\PurchaseController;
 use App\Http\Controllers\Api\SupplierController;
+use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\TransferController;
 use Illuminate\Support\Facades\Route;
 
@@ -51,6 +52,10 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function (): void {
     Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create');
     Route::post('/purchases/{order}/approve', [PurchaseController::class, 'approve'])->middleware('permission:purchases.approve');
     Route::post('/receipts', [PurchaseController::class, 'receive'])->middleware('permission:receipts.create');
+    Route::get('/catalog/stock/options', [CatalogController::class, 'options'])->defaults('kind', 'stock')->middleware('permission:stock.view');
+    Route::get('/stock/lots', [StockController::class, 'lots'])->middleware('permission:stock.view');
+    Route::post('/stock/consume', [StockController::class, 'consume'])->middleware('permission:stock.create');
+    Route::post('/stock/adjust', [StockController::class, 'adjust'])->middleware('permission:stock.edit');
 
     foreach (['branches', 'products', 'users'] as $kind) {
         Route::get('/catalog/'.$kind.'/options', [CatalogController::class, 'options'])

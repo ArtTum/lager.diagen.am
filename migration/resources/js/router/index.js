@@ -8,6 +8,7 @@ import CatalogTable from '@/views/CatalogTable.vue';
 import Transfers from '@/views/transfers/Index.vue';
 import Requests from '@/views/requests/Index.vue';
 import Purchasing from '@/views/purchasing/Index.vue';
+import Stock from '@/views/stock/Index.vue';
 import ComingSoon from '@/views/ComingSoon.vue';
 
 const routes = [
@@ -22,7 +23,7 @@ const routes = [
         ['returns', 'Վերադարձներ'], ['transfers', 'Տեղափոխումներ'], ['notifications', 'Ծանուցումներ'],
         ['reports', 'Հաշվետվություններ'], ['users', 'Օգտատերեր'], ['roles', 'Դերեր և իրավունքներ'],
         ['audit', 'Գործողությունների պատմություն'],
-    ].map(([path, title]) => ({ path: `/${path}`, component: path === 'transfers' ? Transfers : path === 'requests' ? Requests : ['purchases', 'receipts'].includes(path) ? Purchasing : (['branches', 'products', 'users', 'roles'].includes(path) ? CatalogTable : (['notifications', 'reports'].includes(path) ? ComingSoon : PageTable)), meta: { title, permission: `${path}.view` } })),
+    ].map(([path, title]) => ({ path: `/${path}`, component: path === 'transfers' ? Transfers : path === 'requests' ? Requests : ['purchases', 'receipts'].includes(path) ? Purchasing : path === 'stock' ? Stock : (['branches', 'products', 'users', 'roles'].includes(path) ? CatalogTable : (['notifications', 'reports'].includes(path) ? ComingSoon : PageTable)), meta: { title, permission: `${path}.view` } })),
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
 ];
 

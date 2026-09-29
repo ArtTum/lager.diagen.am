@@ -15,14 +15,14 @@ class CatalogController extends Controller
 {
     public function options(string $kind): JsonResponse
     {
-        abort_unless(in_array($kind, ['products', 'users', 'roles', 'transfers'], true), 404);
+        abort_unless(in_array($kind, ['products', 'users', 'roles', 'transfers', 'stock'], true), 404);
         return response()->json(['data' => [
             'categories' => DB::table('categories')->orderBy('name')->get(['id', 'name', 'parent_id']),
             'suppliers' => DB::table('suppliers')->where('active', 1)->orderBy('name')->get(['id', 'name']),
             'branches' => DB::table('branches')->where('active', 1)->orderBy('name')->get(['id', 'name', 'code']),
             'roles' => DB::table('roles')->orderBy('title')->get(['id', 'title', 'name']),
             'permissions' => $kind === 'roles' ? DB::table('permissions')->orderBy('module')->orderBy('title')->get(['code','title','module']) : [],
-            'products' => in_array($kind, ['products', 'transfers', 'requests'], true) ? DB::table('products')->where('active', 1)->orderBy('name')->get(['id','code','name','unit']) : [],
+            'products' => in_array($kind, ['products', 'transfers', 'requests', 'stock'], true) ? DB::table('products')->where('active', 1)->orderBy('name')->get(['id','code','name','unit','purchase_price','expiry_control']) : [],
         ]]);
     }
 
