@@ -10,7 +10,7 @@ class StockRequest extends Model
 {
     protected $table = 'stock_requests';
     public $timestamps = false;
-    protected $fillable = ['request_no','branch_id','requested_by','status','urgency','reason','rejection_reason','reviewed_by','sent_by','received_by','sent_at','received_at'];
+    protected $fillable = ['request_no','branch_id','requested_by','status','urgency','reason','rejection_reason','reviewed_by','sent_by','received_by','sent_at','received_at','created_at'];
     protected function casts(): array
     {
         return ['sent_at' => 'datetime', 'received_at' => 'datetime'];
