@@ -15,7 +15,7 @@ if (DB::getDriverName() !== 'mysql') {
     exit(2);
 }
 
-$schemaPath = base_path('../database/schema.sql');
+$schemaPath = base_path('database/schema.sql');
 $schema = file_get_contents($schemaPath);
 if ($schema === false) {
     fwrite(STDERR, "Could not load the reviewed legacy schema at {$schemaPath}.\n");
