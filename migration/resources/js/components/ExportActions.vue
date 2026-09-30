@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import AppIcon from '@/components/AppIcon.vue';
 
 const props = defineProps({
   page: { type: String, required: true },
@@ -50,9 +51,9 @@ async function download(format) {
 <template>
   <div v-if="canExport" class="export-actions">
     <button class="secondary-button compact-action" type="button" :disabled="disabled || exporting" @click="download('csv')">
-      {{ exporting ? 'Պատրաստվում է…' : 'CSV' }}
+      <AppIcon name="fileCsv" />{{ exporting ? 'Պատրաստվում է…' : 'CSV' }}
     </button>
-    <button class="secondary-button compact-action" type="button" :disabled="disabled || exporting" @click="download('xlsx')">Excel</button>
+    <button class="secondary-button compact-action" type="button" :disabled="disabled || exporting" @click="download('xlsx')"><AppIcon name="fileExcel" />Excel</button>
     <span v-if="error" class="export-error" role="alert">{{ error }}</span>
   </div>
 </template>

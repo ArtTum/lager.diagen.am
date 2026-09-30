@@ -1,5 +1,6 @@
 <script setup>
 import { nextTick, onBeforeUnmount, ref } from 'vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const emit = defineEmits(['detected']);
 const panelOpen = ref(false);
@@ -78,7 +79,7 @@ onBeforeUnmount(stopCamera);
 
 <template>
     <div class="barcode-scanner">
-        <button class="secondary-button" type="button" :disabled="scanning" @click="startCamera">{{ scanning ? 'Տեսախցիկը միացված է' : 'Սկանավորել տեսախցիկով' }}</button>
+        <button class="secondary-button" type="button" :disabled="scanning" @click="startCamera"><AppIcon name="camera" />{{ scanning ? 'Տեսախցիկը միացված է' : 'Սկանավորել տեսախցիկով' }}</button>
         <section v-if="panelOpen" class="barcode-camera-panel" aria-live="polite">
             <video v-if="scanning" ref="video" playsinline muted aria-label="Շտրիխ կոդի տեսախցիկի պատկերը"></video>
             <div class="barcode-camera-status">
@@ -88,6 +89,7 @@ onBeforeUnmount(stopCamera);
         </section>
     </div>
 </template>
+
 
 <style scoped>
 .barcode-scanner{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.barcode-camera-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr);align-items:center;gap:16px;width:100%;padding:14px;border:1px solid var(--line,#e5eaf3);border-radius:16px;background:#f8faff}.barcode-camera-panel video{width:100%;max-height:280px;object-fit:cover;border-radius:12px;background:#101828}.barcode-camera-status p{margin:0 0 12px;color:var(--muted,#78859f)}@media(max-width:640px){.barcode-camera-panel{grid-template-columns:1fr}}

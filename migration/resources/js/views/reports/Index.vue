@@ -153,9 +153,9 @@ onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
       <header class="report-section-head">
         <div><h2>{{ selectedReport }}</h2><p class="muted">Տվյալները սահմանափակվում են ձեր դերով և պահեստի հասանելիությամբ։</p></div>
         <div v-if="canExport" class="report-export-actions">
-          <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('csv')">Ներբեռնել CSV</button>
-          <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('xlsx')">Ներբեռնել Excel</button>
-          <button class="secondary-button" :disabled="exporting || loading" @click="printReport">{{ exporting ? 'Պատրաստվում է…' : 'Ներբեռնել PDF' }}</button>
+          <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('csv')"><AppIcon name="fileCsv" />Ներբեռնել CSV</button>
+          <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('xlsx')"><AppIcon name="fileExcel" />Ներբեռնել Excel</button>
+          <button class="secondary-button" :disabled="exporting || loading" @click="printReport"><AppIcon name="print" />{{ exporting ? 'Պատրաստվում է…' : 'Ներբեռնել PDF' }}</button>
         </div>
       </header>
 
@@ -186,7 +186,7 @@ onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
         <label v-if="showCategoryFilter" class="form-field">Ապրանքային խումբ
           <select v-searchable-select v-model="filters.category_id" class="form-control"><option value="">Բոլոր խմբերը</option><option v-for="category in filterOptions.categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select>
         </label>
-        <button class="primary-button report-apply" :disabled="loading">{{ loading ? 'Բեռնվում է…' : 'Կիրառել ֆիլտրերը' }}</button>
+        <button class="primary-button report-apply" :disabled="loading"><AppIcon name="adjust" />{{ loading ? 'Բեռնվում է…' : 'Կիրառել ֆիլտրերը' }}</button>
       </form>
 
       <div class="table-toolbar"><span class="list-count">Գրառումներ՝ <b>{{ result?.pagination.total ?? '—' }}</b></span></div>

@@ -48,7 +48,7 @@ async function exportCsv() {
 </script>
 
 <template>
-  <div class="page-heading"><div><p class="eyebrow">ՊԱՇԱՐԻ ՎԵՐԱՀՍԿՈՒՄ</p><h1>Պահեստների մնացորդների մատրիցա</h1><p class="muted">Յուրաքանչյուր ապրանքի քանակը՝ ըստ հասանելի պահեստների։</p></div><div class="stock-actions"><RouterLink class="secondary-button" to="/stock">Դիտել LOT-երը</RouterLink><button v-if="canExport" class="primary-button" type="button" @click="exportCsv">Ներբեռնել CSV</button></div></div>
+  <div class="page-heading"><div><p class="eyebrow">ՊԱՇԱՐԻ ՎԵՐԱՀՍԿՈՒՄ</p><h1>Պահեստների մնացորդների մատրիցա</h1><p class="muted">Յուրաքանչյուր ապրանքի քանակը՝ ըստ հասանելի պահեստների։</p></div><div class="stock-actions"><RouterLink class="secondary-button" to="/stock"><AppIcon name="boxes" />Դիտել LOT-երը</RouterLink><button v-if="canExport" class="primary-button" type="button" @click="exportCsv"><AppIcon name="fileCsv" />Ներբեռնել CSV</button></div></div>
   <div v-if="error" class="alert-error" role="alert">{{ error }}</div>
   <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model.trim="search" class="form-control" placeholder="Որոնել ապրանքի անունով կամ կոդով…"></label><span class="list-count">Ապրանքներ՝ <b>{{ result?.pagination.total ?? '…' }}</b></span></div>
     <div class="table-scroll stock-matrix-scroll"><table class="data-table stock-matrix-table"><thead><tr><th>Ապրանք</th><th v-for="location in locations" :key="location.id">{{ location.name }}</th><th>Ընդամենը</th></tr></thead><tbody>

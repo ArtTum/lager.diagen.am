@@ -1145,3 +1145,41 @@ input[type=checkbox]:hover:not(:disabled),input[type=radio]:hover:not(:disabled)
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:3px solid #4c61e833!important;outline-offset:3px}
 input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.55;cursor:not-allowed}
 .check-label{flex-direction:row-reverse;justify-content:space-between}
+
+/* Shared responsive guardrails for the legacy server-rendered pages. */
+@media screen{
+  html,body{max-width:100%;overflow-x:clip}
+  .app-shell,.main-content,.page,.page-card,.table-card,.filter-bar{min-width:0;max-width:100%}
+  .main-content{flex:1 1 auto}
+  .page-heading,.page-heading-actions,.list-toolbar,.filter-bar,.page-footer,.pagination-controls{min-width:0;flex-wrap:wrap}
+  .page-heading>*,.page-heading-actions>*{min-width:0}
+  .table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-inline:contain}
+  .table-card table{max-width:100%}
+  .form-grid,.form-grid>*,.form-field,.form-control,.modal-card,.wide-modal{min-width:0;max-width:100%}
+  input,select,textarea,button{max-width:100%}
+  .table-card td,.table-card th,.page-heading h1,.page-heading .muted{overflow-wrap:anywhere}
+}
+@media screen and (max-width:760px){
+  .page{width:100%;padding-inline:14px}
+  .page-heading{align-items:flex-start}
+  .page-heading-actions{width:100%;justify-content:flex-start}
+  .page-heading-actions>button,.page-heading-actions>a{flex:1 1 auto;justify-content:center}
+  .list-toolbar,.filter-bar{align-items:stretch}
+  .list-toolbar>.search-input,.filter-bar>.search-input{width:100%;max-width:none}
+  .pagination,.page-footer{align-items:flex-start;gap:10px}
+  .pagination-controls{justify-content:flex-start}
+  .modal-backdrop{padding:12px;overflow-y:auto;overscroll-behavior:contain}
+  .modal-card:not(.wide-modal){width:100%;max-height:calc(100dvh - 24px)}
+  .modal-card:not(.wide-modal) .form-grid{grid-template-columns:minmax(0,1fr)}
+  .modal-card:not(.wide-modal) .form-grid>.span-2{grid-column:auto}
+  .modal-actions{flex-wrap:wrap}
+}
+@media screen and (max-width:420px){
+  .page{padding-inline:11px}
+  .topbar{gap:8px;padding-inline:10px}
+  .page-heading h1{font-size:21px;line-height:1.25}
+  .page-heading-actions>button,.page-heading-actions>a{flex-basis:100%}
+  .modal-backdrop{padding:8px}
+  .modal-card:not(.wide-modal){max-height:calc(100dvh - 16px);padding:15px}
+  .modal-actions>*{flex:1 1 auto}
+}

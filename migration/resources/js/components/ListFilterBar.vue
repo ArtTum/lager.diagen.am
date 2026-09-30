@@ -1,4 +1,6 @@
 <script setup>
+import AppIcon from '@/components/AppIcon.vue';
+
 const props = defineProps({
     modelValue: { type: Object, required: true },
     selects: { type: Array, default: () => [] },
@@ -23,6 +25,6 @@ function update(key, value) {
         </label>
         <label v-if="dateRange" class="form-field">{{ dateLabels[0] }}<DatePicker :model-value="modelValue.from || ''" :max="modelValue.to || ''" @update:model-value="update('from', $event)" /></label>
         <label v-if="dateRange" class="form-field">{{ dateLabels[1] }}<DatePicker :model-value="modelValue.to || ''" :min="modelValue.from || ''" @update:model-value="update('to', $event)" /></label>
-        <div class="list-filter-actions"><button class="primary-button" type="submit">Կիրառել</button><button class="secondary-button" type="button" @click="emit('reset')">Մաքրել</button></div>
+            <div class="list-filter-actions"><button class="primary-button" type="submit"><AppIcon name="adjust" />Կիրառել</button><button class="secondary-button" type="button" @click="emit('reset')"><AppIcon name="refresh" />Մաքրել</button></div>
     </form>
 </template>

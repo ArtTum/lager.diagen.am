@@ -1,10 +1,10 @@
 <script setup>
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import {
-  faArrowDown, faArrowLeft, faArrowRight, faArrowRightFromBracket,
+  faArrowDown, faArrowLeft, faArrowRight, faArrowRightFromBracket, faCamera,
   faArrowRightArrowLeft, faArrowTrendDown, faArrowTrendUp, faBarcode,
   faArrowsRotate, faBell, faBox, faBoxesStacked, faChartColumn, faChevronDown,
-  faCircleCheck, faClipboardCheck, faClock, faClockRotateLeft, faFileCirclePlus,
+  faCircleCheck, faClipboardCheck, faClock, faClockRotateLeft, faFileCirclePlus, faFileCsv, faFileExcel,
   faGaugeHigh, faGear, faMagnifyingGlass, faPen, faPlus, faPrint, faRotateLeft, faShieldHalved,
   faSliders, faTrash, faTriangleExclamation, faTruckFast, faUser, faUsers, faVolumeHigh, faVolumeXmark, faWarehouse,
   faXmark,
@@ -24,6 +24,7 @@ const icons = {
   bell: faBell,
   box: faBox,
   boxes: faBoxesStacked,
+  camera: faCamera,
   branches: faWarehouse,
   chart: faChartColumn,
   chevronDown: faChevronDown,
@@ -31,6 +32,8 @@ const icons = {
   clock: faClock,
   dashboard: faGaugeHigh,
   edit: faPen,
+  fileCsv: faFileCsv,
+  fileExcel: faFileExcel,
   logout: faArrowRightFromBracket,
   movements: faArrowRightArrowLeft,
   plusFile: faFileCirclePlus,

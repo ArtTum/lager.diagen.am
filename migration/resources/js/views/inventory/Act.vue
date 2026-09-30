@@ -7,12 +7,32 @@ import { formatDisplayDate } from '@/dateUtils';
 const route = useRoute();
 const act = ref(null);
 const loading = ref(true);
+const pdfBusy = ref(false);
 const error = ref('');
 
-function printAct() {
-  if (!act.value || loading.value) return;
-  window.focus();
-  window.print();
+async function printAct() {
+  if (!act.value || loading.value || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = '';
+  try {
+    const response = await api.get(`inventory/${route.params.session}/act/pdf`, { responseType: 'blob' });
+    const url = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `inventory-act-${route.params.session}.pdf`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (exception) {
+    const payload = exception.response?.data;
+    if (payload instanceof Blob) {
+      try {
+        const body = JSON.parse(await payload.text());
+        error.value = body.message || 'PDF-ը չհաջողվեց ներբեռնել։';
+      } catch { error.value = 'PDF-ը չհաջողվեց ներբեռնել։ Փորձեք կրկին։'; }
+    } else error.value = exception.response?.data?.message || 'PDF-ը չհաջողվեց ներբեռնել։ Փորձեք կրկին։';
+  } finally { pdfBusy.value = false; }
 }
 
 onMounted(async () => {
@@ -27,7 +47,8 @@ onMounted(async () => {
 
 <template>
   <div class="inventory-act-page">
-    <div class="inventory-act-toolbar"><RouterLink class="secondary-button" to="/inventory"><AppIcon name="arrowLeft" /> Գույքագրման ցանկ</RouterLink><button class="primary-button" type="button" :disabled="!act || loading" @click="printAct">Տպել / պահպանել PDF</button></div>
+    <div class="inventory-act-toolbar"><RouterLink class="secondary-button" to="/inventory"><AppIcon name="arrowLeft" /> Գույքագրման ցանկ</RouterLink><button class="primary-button" type="button" :disabled="!act || loading || pdfBusy" @click="printAct">{{ pdfBusy ? 'PDF-ը պատրաստվում է…' : 'Տպել / պահպանել PDF' }}</button></div>
+    <p v-if="error && act" class="alert-error" role="alert">{{ error }}</p>
     <p v-if="loading" class="table-empty">Ակտը բեռնվում է…</p>
     <div v-else-if="error" class="alert-error" role="alert">{{ error }}</div>
     <article v-else-if="act" class="inventory-act-document">

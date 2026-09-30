@@ -80,6 +80,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function (): void {
     Route::get('/inventory', [InventoryController::class, 'index'])->middleware('permission:inventory.view');
     Route::get('/inventory/export', [InventoryController::class, 'export'])->middleware('permission:inventory.export');
     Route::get('/inventory/{session}', [InventoryController::class, 'show'])->middleware('permission:inventory.view');
+    Route::get('/inventory/{session}/act/pdf', [InventoryController::class, 'downloadActPdf'])->middleware('permission:inventory.view');
     Route::get('/inventory/{session}/act', [InventoryController::class, 'act'])->middleware('permission:inventory.view');
     Route::post('/inventory', [InventoryController::class, 'store'])->middleware('permission:inventory.create');
     Route::put('/inventory/{session}/count', [InventoryController::class, 'count'])->middleware('permission:inventory.edit');
