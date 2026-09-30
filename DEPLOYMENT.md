@@ -1,16 +1,16 @@
-# Production cutover preparation
+# Production cutover
 
-The legacy PHP app remains the active application. This runbook prepares the Laravel/Vue release for `lager-diagen.govista.am`; it does not change DNS, the live document root, or the production database.
+The repository now contains the Laravel/Vue application at its root. The production server must still be switched deliberately; this runbook does not change DNS, the live document root, or the production database.
 
 ## Release layout
 
-Keep the current PHP release intact for rollback. Deploy the Laravel project as a separate release directory under `/var/domains/` and set the web server document root to that release's `migration/public` directory. Do not expose the Laravel project root, `.env`, `vendor`, database backups, or `storage` as the web root. The included `public/.htaccess` routes Vue history paths and API requests through Laravel.
+Keep the current PHP release intact on the server for rollback. Deploy this repository as a separate release directory under `/var/domains/` and set the web server document root to that release's `public` directory. Do not expose the Laravel project root, `.env`, `vendor`, database backups, or `storage` as the web root. The included `public/.htaccess` routes Vue history paths and API requests through Laravel.
 
 ## Environment
 
-Use `.env.production.example` as a key list, not as a production `.env` file. Set the actual database credentials in the server-side `.env`; generate a unique application key on the server with `php artisan key:generate --force`. Keep `APP_DEBUG=false`, `APP_ENV=production`, HTTPS `APP_URL`, `SESSION_SECURE_COOKIE=true`, and `APP_TIMEZONE=Asia/Yerevan`. Do not copy local `.env`, tokens, or passwords to the release.
+Use `.env.production.example` as a key list, not as a production `.env` file. Set the actual database credentials in the server-side `.env`; generate a unique application key on the server with `php artisan key:generate --force`. Keep `APP_DEBUG=false`, `APP_ENV=production`, `APP_URL=https://lager.diagen.am`, `SESSION_SECURE_COOKIE=true`, and `APP_TIMEZONE=Asia/Yerevan`. Do not copy local `.env`, tokens, or passwords to the release.
 
-Use PHP 8.2 or newer with the Composer-required extensions enabled, including `pdo_mysql` for the configured MySQL/MariaDB connection. Keep `CORS_ALLOWED_ORIGINS` restricted to the production app origin; the production example sets it to `https://lager-diagen.govista.am`. The Vue app and `/api` should share that origin, so no separate frontend host is required.
+Use PHP 8.2 or newer with the Composer-required extensions enabled, including `pdo_mysql` for the configured MySQL/MariaDB connection. Keep `CORS_ALLOWED_ORIGINS` restricted to the production app origin; the production example sets it to `https://lager.diagen.am`. The Vue app and `/api` should share that origin, so no separate frontend host is required.
 
 The Laravel app uses bearer-token API authentication. Keep the SPA and `/api` on the same production origin. Build Vue assets before enabling the release:
 
@@ -32,7 +32,7 @@ Ensure `storage` and `bootstrap/cache` are writable by the PHP-FPM/Apache servic
    For the configured local `diagen_lager` dataset, `php tools/rehearse_local_upgrade.php` also copies the complete current schema, rows, and trigger bodies into an isolated QA database, applies pending migrations there, verifies business-table hashes and triggers, then removes the temporary database. It refuses non-local MySQL hosts and any database name other than `diagen_lager`; it does not migrate the source database. The optional `--keep` mode also creates synthetic `example.test` users for six-role browser QA and retains the real-data clone temporarily; after QA, remove that exact database with `php tools/drop_local_port_qa_database.php <database-name>`.
 4. On staging, point Laravel at a restored database copy, run migrations, then sign in with existing imported accounts for admin, central storekeeper, finance, and branch roles. Confirm legacy `password_hash(PASSWORD_DEFAULT)` credentials work (the app upgrades the hash after a successful login), then exercise their workflows. Verify counts, role grants, receipt and transfer history, stock, audit records, and exports against the source backup.
 5. Only after the restored-copy checks pass, apply production migrations with `php artisan migrate --force`. Do not run `LagerAccessSeeder` on existing business data; it is intended for a new installation and may initialize empty standard roles.
-6. Configure the virtual host with a TLS certificate valid for `lager-diagen.govista.am` and point its document root to the Laravel release's `public` directory. Warm Laravel caches, then verify TLS hostname validation and `https://lager-diagen.govista.am/up`, login, page access by role, and a read-only stock/report sample. Do not bypass certificate validation during acceptance.
+6. Configure the virtual host with a TLS certificate valid for `lager.diagen.am` and point its document root to the Laravel release's `public` directory. Warm Laravel caches, then verify TLS hostname validation and `https://lager.diagen.am/up`, login, page access by role, and a read-only stock/report sample. Do not bypass certificate validation during acceptance.
 7. Keep the previous release and pre-cutover backup until acceptance. Rollback means switching the document root back to the old release; do not restore a database backup over live writes without an explicit recovery decision.
 
 ## Local data-preservation rehearsal — 2026-09-30
