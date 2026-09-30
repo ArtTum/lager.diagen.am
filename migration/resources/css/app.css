@@ -479,6 +479,19 @@ input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.55;cursor:not-
 .report-export-actions>.secondary-button{min-width:132px;min-height:48px}
 .stock-actions{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(160px,1fr);align-items:stretch;gap:9px}
 .stock-actions>*{min-height:46px}
+/* Keep movement records readable; let the table, rather than its columns, scroll. */
+.movements-table-scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.movements-table{width:1545px;min-width:1545px;max-width:none;table-layout:fixed}
+.movements-table th:nth-child(1),.movements-table td:nth-child(1){width:155px;white-space:nowrap}
+.movements-table th:nth-child(2),.movements-table td:nth-child(2){width:180px}
+.movements-table th:nth-child(3),.movements-table td:nth-child(3){width:150px}
+.movements-table th:nth-child(4),.movements-table td:nth-child(4){width:200px}
+.movements-table th:nth-child(5),.movements-table td:nth-child(5){width:150px}
+.movements-table th:nth-child(6),.movements-table td:nth-child(6){width:220px}
+.movements-table th:nth-child(7),.movements-table td:nth-child(7){width:90px;white-space:nowrap}
+.movements-table th:nth-child(8),.movements-table td:nth-child(8){width:190px}
+.movements-table th:nth-child(9),.movements-table td:nth-child(9){width:210px}
+.movements-table td:nth-child(2),.movements-table td:nth-child(5){overflow-wrap:anywhere}
 @media(max-width:760px){
   .page-heading-actions{width:100%;grid-auto-columns:minmax(0,1fr)}
   .stock-actions{width:100%;grid-auto-columns:minmax(0,1fr)}
