@@ -1,4 +1,5 @@
 <script setup>
+import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import api from '@/services/api';
@@ -16,11 +17,11 @@ let debounce;
 const rows = computed(() => result.value?.data || []);
 const locations = computed(() => result.value?.locations || []);
 
-async function load(pageNumber = 1) {
+async function load(pageNumber = 1, pageSize = result.value?.pagination.per_page || 25) {
   busy.value = true;
   error.value = '';
   try {
-    const response = await api.get('stock/matrix', { params: { page: pageNumber, search: search.value || undefined, per_page: 25 } });
+    const response = await api.get('stock/matrix', { params: { page: pageNumber, search: search.value || undefined, per_page: pageSize } });
     result.value = response.data;
     page.value = response.data.pagination.current_page;
   } catch (e) {
@@ -54,6 +55,6 @@ async function exportCsv() {
       <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.name }}</strong><small class="cell-subtitle">{{ row.code }} · {{ row.unit }}</small></td><td v-for="location in locations" :key="location.id">{{ quantity(row, location.id).toLocaleString('hy-AM', { maximumFractionDigits: 3 }) }}</td><td><strong>{{ Number(row.total).toLocaleString('hy-AM', { maximumFractionDigits: 3 }) }}</strong></td></tr>
       <tr v-if="!busy && result && !rows.length"><td :colspan="locations.length + 2" class="table-empty">{{ search ? 'Որոնմանը համապատասխան ապրանք չկա։' : 'Ակտիվ ապրանքներ չկան։' }}</td></tr><tr v-if="busy && !result"><td colspan="8" class="table-empty">Բեռնվում է…</td></tr>
     </tbody></table></div>
-    <div v-if="result" class="pagination"><span>Ընդամենը՝ {{ result.pagination.total }} ապրանք</span><div class="pagination-controls"><button :disabled="page <= 1 || busy" @click="load(page - 1)">Նախորդ</button><span>Էջ {{ page }} / {{ result.pagination.last_page }}</span><button :disabled="page >= result.pagination.last_page || busy" @click="load(page + 1)">Հաջորդ</button></div></div>
+    <Pagination v-if="result" :pagination="result.pagination" :busy="busy" item-label="ապրանքից" @page-change="load" @per-page-change="load(1, $event)" />
   </section>
 </template>

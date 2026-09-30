@@ -8,6 +8,7 @@ const props = defineProps({
   search: { type: String, default: '' },
   barcode: { type: String, default: '' },
   threshold: { type: String, default: '' },
+  filters: { type: Object, default: () => ({}) },
   endpoint: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
 });
@@ -27,7 +28,7 @@ async function download(format) {
   error.value = '';
   try {
     const response = await api.get(props.endpoint || `pages/${props.page}/export`, {
-      params: { search: props.search || undefined, barcode: props.barcode || undefined, threshold: props.threshold || undefined, format },
+      params: { ...props.filters, search: props.search || undefined, barcode: props.barcode || undefined, threshold: props.threshold || undefined, format },
       responseType: 'blob',
     });
     const url = URL.createObjectURL(response.data);

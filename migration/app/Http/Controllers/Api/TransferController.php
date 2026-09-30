@@ -19,9 +19,9 @@ class TransferController extends Controller
 
     public function approve(Request $request, string $transfer): JsonResponse
     {
-        $this->transfers->approve((int) $transfer, $request->user(), (string) $request->ip());
+        $message = $this->transfers->approve((int) $transfer, $request->user(), (string) $request->ip());
 
-        return response()->json(['message' => 'Տեղափոխումը հաստատվեց։ Այն դեռ պահեստից դուրս չի գրվել։']);
+        return response()->json(['message' => $message]);
     }
 
     public function ship(Request $request, string $transfer): JsonResponse

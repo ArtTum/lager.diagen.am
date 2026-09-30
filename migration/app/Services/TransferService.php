@@ -40,22 +40,34 @@ class TransferService
         });
     }
 
-    public function approve(int $id, User $actor, string $ip): void
+    public function approve(int $id, User $actor, string $ip): string
     {
         abort_unless($actor->currentLocationId() === 0, 403, 'Տեղափոխումները հաստատվում են կենտրոնական պահեստում։');
-        DB::transaction(function () use ($id, $actor, $ip): void {
+        return DB::transaction(function () use ($id, $actor, $ip): string {
             $transfer = $this->transfers->lock($id);
-            abort_unless($transfer && $transfer->status === 'pending', 409, 'Տեղափոխումը հաստատման սպասման կարգավիճակում չէ։');
+            abort_unless($transfer && in_array($transfer->status, ['pending', 'stock_shortage'], true), 409, 'Տեղափոխումը հաստատման կամ պաշարի համալրման սպասման կարգավիճակում չէ։');
+            $previousStatus = (string) $transfer->status;
             $items = $this->transfers->items($id, true);
             abort_if($items->isEmpty(), 409, 'Տեղափոխման ապրանքային տողերը բացակայում են։');
+            $shortages = [];
             foreach ($items as $item) {
                 $available = $this->transfers->freeStock((int) $transfer->from_branch, (int) $item->product_id, $id);
                 if ((float) $item->qty > $available + 0.00001) {
-                    throw ValidationException::withMessages(['items' => ['Ազատ պաշարը բավարար չէ ապրանք '.$item->product_id.'-ի համար։']]);
+                    $productLabel = trim(($item->product?->code ? $item->product->code.' · ' : '').($item->product?->name ?? 'Ապրանքի ID '.$item->product_id));
+                    $shortages[] = '«'.$productLabel.'»՝ պահանջված '.rtrim(rtrim(number_format((float) $item->qty, 3, '.', ''), '0'), '.').', այժմ ազատ '.rtrim(rtrim(number_format($available, 3, '.', ''), '0'), '.');
                 }
             }
+            if ($shortages !== []) {
+                $this->transfers->update($id, ['status' => 'stock_shortage', 'approved_by' => null]);
+                $this->transfers->audit((int) $actor->id, 'Տեղափոխումը սպասում է պաշարի համալրմանը', $id,
+                    ['status' => $previousStatus], ['status' => 'stock_shortage', 'պակասող_ապրանքներ' => $shortages], $ip);
+
+                return 'Ազատ պաշարը դեռ չի բավարարում՝ '.implode('; ', $shortages).'. Տեղափոխումը տեղափոխվեց «Սպասում է պաշարի համալրման» փուլ։ Պաշարը համալրելուց հետո սեղմեք «Վերաստուգել պաշարը»։';
+            }
             $this->transfers->update($id, ['status' => 'approved', 'approved_by' => $actor->id]);
-            $this->transfers->audit((int) $actor->id, 'Տեղափոխումը հաստատվեց', $id, ['status' => 'pending'], ['status' => 'approved'], $ip);
+            $this->transfers->audit((int) $actor->id, 'Տեղափոխումը հաստատվեց', $id, ['status' => $previousStatus], ['status' => 'approved'], $ip);
+
+            return 'Տեղափոխումը հաստատվեց։ Այն դեռ պահեստից դուրս չի գրվել։';
         });
     }
 
@@ -75,7 +87,8 @@ class TransferService
             foreach ($this->transfers->items($id, true) as $item) {
                 $free = $this->transfers->freeStock((int) $transfer->from_branch, (int) $item->product_id, $id);
                 if ((float) $item->qty > $free + 0.00001) {
-                    throw ValidationException::withMessages(['items' => ['Ազատ պաշարը փոխվել է․ տեղափոխումը չի ուղարկվել։']]);
+                    $productLabel = trim(($item->product?->code ? $item->product->code.' · ' : '').($item->product?->name ?? 'Ապրանքի ID '.$item->product_id));
+                    throw ValidationException::withMessages(['items' => ['«'.$productLabel.'» ապրանքի ազատ քանակը փոխվել է․ տեղափոխումը չի ուղարկվել։']]);
                 }
                 $remaining = (float) $item->qty;
                 foreach ($this->transfers->availableLots((int) $item->product_id, $fromLocation) as $lot) {
@@ -89,7 +102,8 @@ class TransferService
                     $remaining -= $take;
                 }
                 if ($remaining > 0.00001) {
-                    throw ValidationException::withMessages(['items' => ['Աղբյուր պահեստում ապրանքի քանակը բավարար չէ։']]);
+                    $productLabel = trim(($item->product?->code ? $item->product->code.' · ' : '').($item->product?->name ?? 'Ապրանքի ID '.$item->product_id));
+                    throw ValidationException::withMessages(['items' => ['«'.$productLabel.'» ապրանքի քանակը բավարար չէ աղբյուր պահեստում։']]);
                 }
             }
             $this->transfers->update($id, ['status' => 'shipped', 'shipped_by' => $actor->id]);

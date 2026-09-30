@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import api from '@/services/api';
+import { formatDisplayDate } from '@/dateUtils';
 
 const route = useRoute();
 const document = ref(null);
@@ -9,8 +10,12 @@ const error = ref('');
 const loading = ref(true);
 const statusLabels = { shipped: 'Ուղարկված', received: 'Ստացված', closed: 'Փակված' };
 const urgencyLabels = { normal: 'Սովորական', high: 'Բարձր', urgent: 'Շտապ' };
-const date = value => value ? new Date(value).toLocaleString('hy-AM', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
-function printDocument() { window.print(); }
+const date = formatDisplayDate;
+function printDocument() {
+  if (!document.value) return;
+  window.focus();
+  window.print();
+}
 
 onMounted(async () => {
   try { document.value = (await api.get(`requests/${route.params.request}/dispatch-document`)).data.data; }
@@ -47,5 +52,5 @@ onMounted(async () => {
 <style scoped>
 .dispatch-page{max-width:1100px;margin:0 auto}.dispatch-actions{display:flex;align-items:center;gap:9px}.dispatch-paper{padding:30px;background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow)}.dispatch-title{padding-bottom:18px;border-bottom:1px solid var(--border)}.dispatch-title h1{margin:8px 0;font-size:23px}.dispatch-title>p:last-child{margin:0;color:#78859c}.dispatch-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 18px;margin:20px 0;border:1px solid var(--border);border-radius:12px;background:#fafbfe}.dispatch-meta>div{display:grid;gap:5px;padding:13px 14px;border-bottom:1px solid var(--border)}.dispatch-meta>div:nth-last-child(-n+3){border-bottom:0}.dispatch-meta small,.dispatch-reason small{font-size:10px;color:#8792a7}.dispatch-meta strong{font-size:12px}.dispatch-reason{display:grid;gap:5px;padding:12px 14px;border-left:3px solid #6578ff;background:#f6f7ff;color:#45516a;font-size:12px}.dispatch-table-wrap{overflow:auto;margin-top:20px}.dispatch-table{min-width:620px}.number-cell{text-align:right}.dispatch-signatures{display:grid;grid-template-columns:1fr 1fr;gap:50px;margin:55px 0 8px;padding-top:12px;border-top:1px solid #aab3c2;font-size:12px}.dispatch-state{padding:20px}
 @media(max-width:700px){.dispatch-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.dispatch-meta>div:nth-last-child(-n+3){border-bottom:1px solid var(--border)}.dispatch-meta>div:nth-last-child(-n+1){border-bottom:0}.dispatch-actions{flex-wrap:wrap}.dispatch-paper{padding:17px}.dispatch-signatures{gap:18px}}
-@media print{@page{size:A4;margin:15mm}.no-print{display:none!important}.dispatch-page{max-width:none;margin:0}.dispatch-paper{padding:0;border:0;border-radius:0;box-shadow:none}.dispatch-meta{break-inside:avoid}.dispatch-table{font-size:10px}.dispatch-signatures{margin-top:45px}}
+@media print{@page{size:A4 portrait;margin:15mm}.no-print{display:none!important}.dispatch-page{max-width:none;margin:0}.dispatch-paper{padding:0;border:0;border-radius:0;box-shadow:none}.dispatch-meta{break-inside:avoid}.dispatch-table{font-size:10px}.dispatch-signatures{margin-top:45px}}
 </style>

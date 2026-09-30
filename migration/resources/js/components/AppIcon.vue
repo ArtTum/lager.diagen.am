@@ -3,10 +3,10 @@ import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import {
   faArrowDown, faArrowLeft, faArrowRight, faArrowRightFromBracket,
   faArrowRightArrowLeft, faArrowTrendDown, faArrowTrendUp, faBarcode,
-  faBell, faBox, faBoxesStacked, faChartColumn, faChevronDown,
-  faClipboardCheck, faClock, faClockRotateLeft, faFileCirclePlus,
-  faGaugeHigh, faMagnifyingGlass, faPen, faPlus, faPrint, faRotateLeft, faShieldHalved,
-  faTrash, faTruckFast, faUsers, faVolumeHigh, faVolumeXmark, faWarehouse,
+  faArrowsRotate, faBell, faBox, faBoxesStacked, faChartColumn, faChevronDown,
+  faCircleCheck, faClipboardCheck, faClock, faClockRotateLeft, faFileCirclePlus,
+  faGaugeHigh, faGear, faMagnifyingGlass, faPen, faPlus, faPrint, faRotateLeft, faShieldHalved,
+  faSliders, faTrash, faTriangleExclamation, faTruckFast, faUser, faUsers, faVolumeHigh, faVolumeXmark, faWarehouse,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -14,6 +14,9 @@ defineProps({ name: { type: String, required: true } });
 
 const icons = {
   add: faPlus,
+  accountSettings: faGear,
+  adjust: faSliders,
+  alert: faTriangleExclamation,
   arrowDown: faArrowDown,
   arrowLeft: faArrowLeft,
   arrowRight: faArrowRight,
@@ -32,9 +35,12 @@ const icons = {
   movements: faArrowRightArrowLeft,
   plusFile: faFileCirclePlus,
   print: faPrint,
+  profile: faUser,
   returns: faRotateLeft,
+  refresh: faArrowsRotate,
   search: faMagnifyingGlass,
   shield: faShieldHalved,
+  success: faCircleCheck,
   trendDown: faArrowTrendDown,
   trendUp: faArrowTrendUp,
   transfers: faTruckFast,

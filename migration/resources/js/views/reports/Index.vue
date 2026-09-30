@@ -1,8 +1,10 @@
 <script setup>
+import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import { formatDisplayDate, isDateValue } from '@/dateUtils';
 
 const route = useRoute();
 const user = ref(currentUser());
@@ -43,7 +45,7 @@ const showCategoryFilter = computed(() => ['stock_by_location', 'central_stock',
 const showDateFilter = computed(() => !['stock_by_location', 'central_stock', 'branch_stock', 'item_value', 'low_stock', 'expired_lots', 'near_expiry', 'average_usage'].includes(filters.report_type));
 const costColumns = ['value', 'unit_cost', 'average_unit_cost', 'used_cost'];
 
-async function load(nextPage = 1) {
+async function load(nextPage = 1, pageSize = result.value?.pagination.per_page || 15) {
   loading.value = true;
   error.value = '';
 
@@ -53,6 +55,7 @@ async function load(nextPage = 1) {
         ...filters,
         branch_id: showBranchFilter.value ? filters.branch_id : '',
         page: nextPage,
+        per_page: pageSize,
       },
     });
     result.value = response.data;
@@ -93,11 +96,12 @@ async function exportReport(format) {
 }
 
 function printReport() {
-  window.print();
+  exportReport('pdf');
 }
 
 function formatCell(key, value) {
   if (value === null || value === undefined || value === '') return '—';
+  if (/(?:_at|_on|_date)$/.test(key) || key === 'date' || isDateValue(value)) return formatDisplayDate(value);
   if (costColumns.includes(key)) return `${Number(value || 0).toLocaleString('hy-AM')} ֏`;
   return value;
 }
@@ -141,7 +145,7 @@ onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
     <section class="report-summary-grid">
       <article class="report-summary-card"><span class="metric-icon blue"><AppIcon name="boxes" /></span><div><strong>{{ result?.summary?.quantity ?? '—' }}</strong><small>Պաշար՝ միավոր</small></div></article>
       <article v-if="canSeeCosts" class="report-summary-card"><span class="metric-icon violet">֏</span><div><strong>{{ Number(result?.summary?.value || 0).toLocaleString('hy-AM') }} ֏</strong><small>Պաշարի արժեք</small></div></article>
-      <article class="report-summary-card"><span class="metric-icon amber">!</span><div><strong>{{ result?.summary?.below_minimum ?? '—' }}</strong><small>Նվազագույնից ցածր</small></div></article>
+      <article class="report-summary-card"><span class="metric-icon amber"><AppIcon name="alert" /></span><div><strong>{{ result?.summary?.below_minimum ?? '—' }}</strong><small>Նվազագույնից ցածր</small></div></article>
       <article class="report-summary-card"><span class="metric-icon green"><AppIcon name="plusFile" /></span><div><strong>{{ result?.summary?.open_requests ?? '—' }}</strong><small>Բաց պահանջագիր</small></div></article>
     </section>
 
@@ -151,36 +155,36 @@ onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
         <div v-if="canExport" class="report-export-actions">
           <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('csv')">Ներբեռնել CSV</button>
           <button class="secondary-button" :disabled="exporting || loading" @click="exportReport('xlsx')">Ներբեռնել Excel</button>
-          <button class="secondary-button" :disabled="loading" @click="printReport">Տպել / PDF</button>
+          <button class="secondary-button" :disabled="exporting || loading" @click="printReport">{{ exporting ? 'Պատրաստվում է…' : 'Ներբեռնել PDF' }}</button>
         </div>
       </header>
 
       <form class="report-filter-grid" @submit.prevent="load(1)">
         <label class="form-field">Հաշվետվություն
-          <select v-model="filters.report_type" class="form-control">
+          <select v-searchable-select v-model="filters.report_type" class="form-control">
             <option v-for="[key, title] in reportTypes" :key="key" :value="key">{{ title }}</option>
           </select>
         </label>
-        <label v-if="showDateFilter" class="form-field">Սկսած<input v-model="filters.from" class="form-control" type="date"></label>
-        <label v-if="showDateFilter" class="form-field">Մինչև<input v-model="filters.to" class="form-control" type="date"></label>
+        <label v-if="showDateFilter" class="form-field">Սկսած<DatePicker v-model="filters.from" /></label>
+        <label v-if="showDateFilter" class="form-field">Մինչև<DatePicker v-model="filters.to" /></label>
         <label v-if="showBranchFilter" class="form-field">Մասնաճյուղ
-          <select v-model="filters.branch_id" class="form-control"><option value="">Բոլոր պահեստները</option><option value="0">Կենտրոնական պահեստ</option><option v-for="branch in filterOptions.branches || []" :key="branch.id" :value="branch.id">{{ branch.name }}</option></select>
+          <select v-searchable-select v-model="filters.branch_id" class="form-control"><option value="">Բոլոր պահեստները</option><option value="0">Կենտրոնական պահեստ</option><option v-for="branch in filterOptions.branches || []" :key="branch.id" :value="branch.id">{{ branch.name }}</option></select>
         </label>
         <label v-if="!['supplier_purchases', 'purchases_by_period'].includes(filters.report_type)" class="form-field">Ապրանք
-          <select v-model="filters.product_id" class="form-control"><option value="">Բոլոր ապրանքները</option><option v-for="product in filterOptions.products || []" :key="product.id" :value="product.id">{{ product.code }} · {{ product.name }}</option></select>
+          <select v-searchable-select v-model="filters.product_id" class="form-control"><option value="">Բոլոր ապրանքները</option><option v-for="product in filterOptions.products || []" :key="product.id" :value="product.id">{{ product.code }} · {{ product.name }}</option></select>
         </label>
         <label v-if="showSupplierFilter" class="form-field">Մատակարար
-          <select v-model="filters.supplier_id" class="form-control"><option value="">Բոլոր մատակարարները</option><option v-for="supplier in filterOptions.suppliers || []" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option></select>
+          <select v-searchable-select v-model="filters.supplier_id" class="form-control"><option value="">Բոլոր մատակարարները</option><option v-for="supplier in filterOptions.suppliers || []" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option></select>
         </label>
         <label v-if="showLotFilter" class="form-field">LOT<input v-model.trim="filters.lot_no" class="form-control" maxlength="100" placeholder="Որոնել LOT-ով"></label>
         <label v-if="showMovementTypeFilter" class="form-field">Գործողության տեսակ
-          <select v-model="filters.movement_type" class="form-control"><option value="">Բոլոր գործողությունները</option><option v-for="type in filterOptions.movement_types || []" :key="type" :value="type">{{ type }}</option></select>
+          <select v-searchable-select v-model="filters.movement_type" class="form-control"><option value="">Բոլոր գործողությունները</option><option v-for="type in filterOptions.movement_types || []" :key="type" :value="type">{{ type }}</option></select>
         </label>
         <label v-if="showActorFilter" class="form-field">Աշխատակից
-          <select v-model="filters.actor_id" class="form-control"><option value="">Բոլոր աշխատակիցները</option><option v-for="actor in filterOptions.actors || []" :key="actor.id" :value="actor.id">{{ actor.name }}</option></select>
+          <select v-searchable-select v-model="filters.actor_id" class="form-control"><option value="">Բոլոր աշխատակիցները</option><option v-for="actor in filterOptions.actors || []" :key="actor.id" :value="actor.id">{{ actor.name }}</option></select>
         </label>
         <label v-if="showCategoryFilter" class="form-field">Ապրանքային խումբ
-          <select v-model="filters.category_id" class="form-control"><option value="">Բոլոր խմբերը</option><option v-for="category in filterOptions.categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select>
+          <select v-searchable-select v-model="filters.category_id" class="form-control"><option value="">Բոլոր խմբերը</option><option v-for="category in filterOptions.categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select>
         </label>
         <button class="primary-button report-apply" :disabled="loading">{{ loading ? 'Բեռնվում է…' : 'Կիրառել ֆիլտրերը' }}</button>
       </form>
@@ -198,7 +202,7 @@ onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
           </tbody>
         </table>
       </div>
-      <footer v-if="result" class="pagination"><span>Էջ {{ result.pagination.current_page }} / {{ result.pagination.last_page }}</span><div class="pagination-controls"><button :disabled="page <= 1 || loading" @click="load(page - 1)">Նախորդ</button><span>{{ result.pagination.total }} արդյունք</span><button :disabled="page >= result.pagination.last_page || loading" @click="load(page + 1)">Հաջորդ</button></div></footer>
+      <Pagination v-if="result" :pagination="result.pagination" :busy="loading" item-label="արդյունքից" @page-change="load" @per-page-change="load(1, $event)" />
     </section>
   </div>
 </template>

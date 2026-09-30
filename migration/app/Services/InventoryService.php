@@ -18,6 +18,7 @@ class InventoryService
     {
         $location = (int) $actor->currentLocationId();
         $query = $this->inventory->listQuery($location, trim((string) ($filters['search'] ?? '')));
+        $this->applyListFilters($query, $filters);
         $rows = $query->paginate(min(max((int) ($filters['per_page'] ?? 15), 5), 100));
 
         return ['data' => $rows->items(), 'locations' => $this->inventory->activeLocations($location), 'pagination' => ['current_page' => $rows->currentPage(), 'last_page' => $rows->lastPage(), 'per_page' => $rows->perPage(), 'total' => $rows->total()]];
@@ -27,6 +28,7 @@ class InventoryService
     public function export(User $actor, array $filters): array
     {
         $query = $this->inventory->listQuery((int) $actor->currentLocationId(), trim((string) ($filters['search'] ?? '')));
+        $this->applyListFilters($query, $filters);
 
         return ['headers' => ['Գույքագրում', 'Պահեստ', 'Կարգավիճակ', 'Տողերի քանակ', 'Հաշվված տողեր', 'Սկսվել է', 'Սկսել է', 'Փակվել է', 'Հաստատել է'],
             'rows' => (function () use ($query): \Generator {
@@ -36,6 +38,19 @@ class InventoryService
                         $session->starter?->name, $session->closed_at?->toDateTimeString(), $session->approver?->name];
                 }
             })()];
+    }
+
+    private function applyListFilters(\Illuminate\Database\Eloquent\Builder $query, array $filters): void
+    {
+        if (filled($filters['status'] ?? null)) {
+            $query->where('status', $filters['status']);
+        }
+        if (filled($filters['from'] ?? null)) {
+            $query->whereDate('started_at', '>=', $filters['from']);
+        }
+        if (filled($filters['to'] ?? null)) {
+            $query->whereDate('started_at', '<=', $filters['to']);
+        }
     }
 
     public function show(User $actor, int $sessionId): array

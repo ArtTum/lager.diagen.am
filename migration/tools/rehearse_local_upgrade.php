@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Support\PermissionCatalog;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -195,7 +196,7 @@ try {
     // The export migration intentionally adds capability codes/grants. Prove
     // all existing natural permission keys and role grants survive, and allow
     // only the corresponding additions derived from each role's existing view grant.
-    $exportModules = collect(\App\Support\PermissionCatalog::moduleActions())
+    $exportModules = collect(PermissionCatalog::moduleActions())
         ->filter(static fn (array $actions): bool => in_array('export', $actions, true))
         ->keys()->all();
     $expectedPermissions = [];

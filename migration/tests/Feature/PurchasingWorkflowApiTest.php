@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\Category;
 use App\Models\Movement;
 use App\Models\Permission;
 use App\Models\Product;
@@ -12,6 +13,7 @@ use App\Models\Receipt;
 use App\Models\ReceiptItem;
 use App\Models\Role;
 use App\Models\StockLot;
+use App\Models\StockRequest;
 use App\Models\StockRequestItem;
 use App\Models\Supplier;
 use App\Models\User;
@@ -113,7 +115,7 @@ class PurchasingWorkflowApiTest extends TestCase
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
         $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
-        $category = \App\Models\Category::query()->create(['name' => 'Reagents']);
+        $category = Category::query()->create(['name' => 'Reagents']);
         $supplier = Supplier::query()->create(['name' => 'Verified QA supplier', 'active' => true]);
         $product = Product::query()->create([
             'code' => 'E2E-LOT-001', 'name' => 'Lifecycle reagent', 'unit' => 'հատ', 'purchase_price' => 100,
@@ -171,7 +173,7 @@ class PurchasingWorkflowApiTest extends TestCase
             'product_id' => $product->id, 'qty' => 1, 'issue_type' => 'usage',
         ])->assertOk();
 
-        self::assertSame('closed', \App\Models\StockRequest::query()->findOrFail($requestId)->status);
+        self::assertSame('closed', StockRequest::query()->findOrFail($requestId)->status);
         $centralLot = StockLot::query()->where('location_id', 0)->firstOrFail();
         $branchLot = StockLot::query()->where('location_id', $branch->id)->firstOrFail();
         self::assertEquals(5.0, (float) PurchaseOrderItem::query()->findOrFail($orderItemId)->received_qty);

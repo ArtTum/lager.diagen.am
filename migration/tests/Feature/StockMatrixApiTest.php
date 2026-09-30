@@ -111,27 +111,49 @@ class StockMatrixApiTest extends TestCase
     private function createSchema(): void
     {
         Schema::create('branches', function (Blueprint $table): void {
-            $table->id(); $table->string('name'); $table->string('code'); $table->boolean('active')->default(true);
+            $table->id();
+            $table->string('name');
+            $table->string('code');
+            $table->boolean('active')->default(true);
         });
         Schema::create('roles', function (Blueprint $table): void {
-            $table->id(); $table->string('name'); $table->string('title');
+            $table->id();
+            $table->string('name');
+            $table->string('title');
         });
         Schema::create('permissions', function (Blueprint $table): void {
-            $table->id(); $table->string('code')->unique(); $table->string('title'); $table->string('module');
+            $table->id();
+            $table->string('code')->unique();
+            $table->string('title');
+            $table->string('module');
         });
         Schema::create('role_permissions', function (Blueprint $table): void {
-            $table->unsignedBigInteger('role_id'); $table->unsignedBigInteger('permission_id'); $table->primary(['role_id', 'permission_id']);
+            $table->unsignedBigInteger('role_id');
+            $table->unsignedBigInteger('permission_id');
+            $table->primary(['role_id', 'permission_id']);
         });
         Schema::create('users', function (Blueprint $table): void {
-            $table->id(); $table->string('name'); $table->string('email')->unique(); $table->string('password')->nullable();
-            $table->unsignedBigInteger('role_id')->nullable(); $table->unsignedBigInteger('branch_id')->nullable(); $table->boolean('active')->default(true);
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('password')->nullable();
+            $table->unsignedBigInteger('role_id')->nullable();
+            $table->unsignedBigInteger('branch_id')->nullable();
+            $table->boolean('active')->default(true);
         });
         Schema::create('products', function (Blueprint $table): void {
-            $table->id(); $table->string('code'); $table->string('name'); $table->string('unit'); $table->boolean('active')->default(true);
+            $table->id();
+            $table->string('code');
+            $table->string('name');
+            $table->string('unit');
+            $table->boolean('active')->default(true);
         });
         Schema::create('stock_lots', function (Blueprint $table): void {
-            $table->id(); $table->unsignedBigInteger('product_id'); $table->unsignedBigInteger('location_id');
-            $table->string('lot_no'); $table->decimal('qty', 12, 3)->default(0);
+            $table->id();
+            $table->unsignedBigInteger('product_id');
+            $table->unsignedBigInteger('location_id');
+            $table->string('lot_no');
+            $table->decimal('qty', 12, 3)->default(0);
         });
     }
 }

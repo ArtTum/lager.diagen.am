@@ -10,7 +10,9 @@ Keep the current PHP release intact for rollback. Deploy the Laravel project as 
 
 Use `.env.production.example` as a key list, not as a production `.env` file. Set the actual database credentials in the server-side `.env`; generate a unique application key on the server with `php artisan key:generate --force`. Keep `APP_DEBUG=false`, `APP_ENV=production`, HTTPS `APP_URL`, `SESSION_SECURE_COOKIE=true`, and `APP_TIMEZONE=Asia/Yerevan`. Do not copy local `.env`, tokens, or passwords to the release.
 
-The Laravel app uses bearer-token API authentication. The Vue app and `/api` should share the production origin. Build Vue assets before enabling the release:
+Use PHP 8.2 or newer with the Composer-required extensions enabled, including `pdo_mysql` for the configured MySQL/MariaDB connection. Keep `CORS_ALLOWED_ORIGINS` restricted to the production app origin; the production example sets it to `https://lager-diagen.govista.am`. The Vue app and `/api` should share that origin, so no separate frontend host is required.
+
+The Laravel app uses bearer-token API authentication. Keep the SPA and `/api` on the same production origin. Build Vue assets before enabling the release:
 
 ```sh
 npm ci

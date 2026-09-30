@@ -37,6 +37,13 @@ class ReturnRepository
         return Product::query()->whereKey($id)->where('active', true)->exists();
     }
 
+    public function productLabel(int $id): string
+    {
+        $product = Product::query()->find($id, ['code', 'name']);
+
+        return $product ? trim($product->code.' · '.$product->name) : 'ID '.$id;
+    }
+
     public function activeBranch(int $id): bool
     {
         return Branch::query()->whereKey($id)->where('active', true)->where('code', '<>', 'CENTRAL')->exists();

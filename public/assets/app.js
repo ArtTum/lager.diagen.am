@@ -260,11 +260,21 @@ function initPaginatedLists() {
         if (search) usedSearches.add(search);
         const footer = document.createElement('div');
         footer.className = 'list-pagination';
-        footer.innerHTML = '<span class="list-pagination-count" aria-live="polite"></span><div class="list-pagination-controls"><label>Տողեր՝ <select aria-label="Տողերի քանակը մեկ էջում"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label><button type="button" class="secondary-button" data-page-prev aria-label="Նախորդ էջ">‹</button><span class="list-pagination-page" aria-live="polite"></span><button type="button" class="secondary-button" data-page-next aria-label="Հաջորդ էջ">›</button></div>';
+        footer.innerHTML = '<span class="list-pagination-count" aria-live="polite"></span><div class="list-pagination-controls"><div class="page-size-control"><span>Տող / Էջ</span><div class="page-size-picker"><button type="button" class="page-size-trigger" aria-label="Տողերի քանակը մեկ էջում" aria-haspopup="listbox" aria-expanded="false"><span data-page-size-value>25</span><i class="page-size-chevron" aria-hidden="true"></i></button></div></div><button type="button" class="secondary-button" data-page-prev aria-label="Նախորդ էջ">‹</button><span class="list-pagination-page" aria-live="polite"></span><button type="button" class="secondary-button" data-page-next aria-label="Հաջորդ էջ">›</button></div>';
         card.append(footer);
         const count = footer.querySelector('.list-pagination-count');
         const pageText = footer.querySelector('.list-pagination-page');
-        const sizeSelect = footer.querySelector('select');
+        const sizePicker = footer.querySelector('.page-size-picker');
+        const sizeTrigger = footer.querySelector('.page-size-trigger');
+        const sizeValue = footer.querySelector('[data-page-size-value]');
+        const pageSizeOptions = [5, 10, 15, 25, 50, 100];
+        const sizeMenu = document.createElement('div');
+        sizeMenu.className = 'page-size-menu legacy-page-size-menu';
+        sizeMenu.setAttribute('role', 'listbox');
+        sizeMenu.setAttribute('aria-label', 'Տողերի քանակը մեկ էջում');
+        sizeMenu.hidden = true;
+        sizeMenu.innerHTML = pageSizeOptions.map((size) => `<button type="button" role="option" data-page-size="${size}" aria-selected="${size === pageSizeDefault}"${size === pageSizeDefault ? ' class="selected"' : ''}>${size}</button>`).join('');
+        document.body.append(sizeMenu);
         const prev = footer.querySelector('[data-page-prev]');
         const next = footer.querySelector('[data-page-next]');
         let page = 1;
@@ -284,14 +294,60 @@ function initPaginatedLists() {
             prev.disabled = page <= 1;
             next.disabled = page >= pages;
             const showPages = matching.length > pageSizeDefault || alwaysShowPagination;
-            sizeSelect.closest('label').hidden = !showPages;
+            sizePicker.closest('.page-size-control').hidden = !showPages;
             prev.hidden = !showPages;
             next.hidden = !showPages;
             pageText.hidden = !showPages;
             footer.classList.toggle('has-pages', showPages);
         };
         search?.addEventListener('input', () => { page = 1; render(); });
-        sizeSelect.addEventListener('change', () => { pageSize = Number(sizeSelect.value) || pageSizeDefault; page = 1; render(); });
+        const closeSizeMenu = () => {
+            sizeMenu.hidden = true;
+            sizeTrigger.setAttribute('aria-expanded', 'false');
+        };
+        const placeSizeMenu = () => {
+            const rect = sizeTrigger.getBoundingClientRect();
+            const menuHeight = sizeMenu.offsetHeight;
+            const openAbove = rect.bottom + menuHeight + 8 > window.innerHeight && rect.top > menuHeight + 8;
+            sizeMenu.style.left = `${Math.max(8, Math.min(rect.right - sizeMenu.offsetWidth, window.innerWidth - sizeMenu.offsetWidth - 8))}px`;
+            sizeMenu.style.top = `${openAbove ? rect.top - menuHeight - 8 : rect.bottom + 8}px`;
+        };
+        sizeTrigger.addEventListener('click', () => {
+            const opening = sizeMenu.hidden;
+            document.querySelectorAll('.legacy-page-size-menu').forEach((menu) => { menu.hidden = true; });
+            document.querySelectorAll('.page-size-trigger[aria-expanded="true"]').forEach((trigger) => trigger.setAttribute('aria-expanded', 'false'));
+            if (!opening) return;
+            sizeMenu.hidden = false;
+            sizeTrigger.setAttribute('aria-expanded', 'true');
+            placeSizeMenu();
+            sizeMenu.querySelector(`[data-page-size="${pageSize}"]`)?.focus();
+        });
+        sizeMenu.addEventListener('click', (event) => {
+            const option = event.target.closest('[data-page-size]');
+            if (!option) return;
+            pageSize = Number(option.dataset.pageSize) || pageSizeDefault;
+            sizeValue.textContent = String(pageSize);
+            sizeMenu.querySelectorAll('[data-page-size]').forEach((item) => {
+                const selected = Number(item.dataset.pageSize) === pageSize;
+                item.classList.toggle('selected', selected);
+                item.setAttribute('aria-selected', String(selected));
+            });
+            page = 1;
+            closeSizeMenu();
+            render();
+            sizeTrigger.focus();
+        });
+        document.addEventListener('click', (event) => {
+            if (!sizeMenu.hidden && !sizeMenu.contains(event.target) && !sizeTrigger.contains(event.target)) closeSizeMenu();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && !sizeMenu.hidden) {
+                closeSizeMenu();
+                sizeTrigger.focus();
+            }
+        });
+        window.addEventListener('resize', () => { if (!sizeMenu.hidden) placeSizeMenu(); });
+        window.addEventListener('scroll', () => { if (!sizeMenu.hidden) placeSizeMenu(); }, true);
         prev.addEventListener('click', () => { page = Math.max(1, page - 1); render(); });
         next.addEventListener('click', () => { page += 1; render(); });
         render();

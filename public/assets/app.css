@@ -573,7 +573,19 @@ button:active,.primary-button:active,.secondary-button:active,.danger-button:act
 .list-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:10px 16px;border-top:1px solid #edf0f5;color:#7a879b;font-size:12px}
 .list-pagination-controls{display:flex;align-items:center;gap:8px}
 .list-pagination-controls label{display:flex;align-items:center;gap:7px;margin:0;color:#77849a;font-size:11px;font-weight:600}
-.list-pagination-controls select{min-height:34px;padding:5px 9px;border:1px solid #dce3ed;border-radius:9px;background:#fff;color:#344054;font-size:12px}
+.list-pagination-controls .page-size-control{display:flex;align-items:center;gap:8px;color:#75839c;font-size:11px;white-space:nowrap}
+.list-pagination-controls .page-size-picker{position:relative}
+.list-pagination-controls .page-size-trigger{width:auto;min-width:76px;height:40px;min-height:40px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 11px 0 14px;border:1px solid #dce3ef;border-radius:12px;background:linear-gradient(180deg,#fff,#fbfcff);color:#263650;font-size:13px;font-weight:700;box-shadow:0 2px 5px #18243b08;transition:border-color .16s,box-shadow .16s}
+.list-pagination-controls .page-size-trigger:hover,.list-pagination-controls .page-size-trigger[aria-expanded=true]{border-color:#9aa8ff;box-shadow:0 0 0 3px #6679ff18,0 5px 14px #24335b12}
+.list-pagination-controls .page-size-trigger:focus-visible{outline:0;border-color:#6879ff;box-shadow:0 0 0 3px #6879ff30}
+.list-pagination-controls .page-size-chevron{width:8px;height:8px;border-right:1.8px solid #73829c;border-bottom:1.8px solid #73829c;transform:rotate(45deg) translateY(-2px);transition:transform .16s}
+.list-pagination-controls .page-size-trigger[aria-expanded=true] .page-size-chevron{transform:rotate(225deg) translate(-1px,-1px)}
+.legacy-page-size-menu{position:fixed;right:auto;bottom:auto;z-index:1000;width:142px;padding:6px;border:1px solid #e0e6f2;border-radius:13px;background:#fff;box-shadow:0 14px 34px #18243b24,0 3px 8px #18243b0c;animation:page-size-in .14s ease-out}
+.legacy-page-size-menu button{width:100%;min-height:35px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border:0;border-radius:8px;background:transparent;color:#44536d;text-align:left;font-size:12px;font-weight:600;transition:background .12s,color .12s}
+.legacy-page-size-menu button:hover,.legacy-page-size-menu button:focus-visible{outline:0;background:#f1f3ff;color:#4659ed}
+.legacy-page-size-menu button.selected{background:#eef1ff;color:#4055ed;font-weight:800}
+.legacy-page-size-menu button.selected::after{content:'✓';color:#4b5fff;font-size:13px}
+@keyframes page-size-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .list-pagination-controls button{width:34px;min-width:34px;min-height:34px;padding:4px;border-radius:9px;font-size:18px;line-height:1}
 .list-pagination-controls button:disabled{opacity:.42;cursor:not-allowed}
 .list-pagination-page{min-width:48px;color:#46546c;text-align:center;font-size:11px;font-weight:700}
@@ -1094,3 +1106,42 @@ button,a,.nav-item{ -webkit-tap-highlight-color:transparent }
 @media(max-width:700px){.management-answer-summary{grid-template-columns:1fr 1fr}.management-answer-columns{grid-template-columns:1fr}}
 @media(max-width:420px){.management-answer-filters{grid-template-columns:1fr}.management-answer-filters label:first-of-type{grid-column:auto}.management-answer-summary{grid-template-columns:1fr}}
 .dispatch-link{display:inline-flex;align-items:center;margin-top:5px;color:var(--blue);font-size:11px;font-weight:700}.dispatch-link:hover{text-decoration:underline}
+
+/* Products page: align scanning, list search, exports and row actions. */
+.product-barcode-search{display:grid;grid-template-columns:minmax(280px,1fr) auto auto;align-items:end;gap:12px;margin:0 0 14px;padding:16px 18px;border:1px solid var(--line);border-radius:15px;background:#fff;box-shadow:var(--shadow-card)}
+.product-barcode-search>label{display:grid;min-width:0;gap:7px;margin:0;color:#4b5870;font-size:12px;font-weight:680}
+.product-barcode-search input,.product-barcode-search>button{height:48px;min-height:48px}
+.product-barcode-search>button{min-width:148px}
+.product-barcode-search+.table-card .table-list-tools{display:flex;flex-wrap:wrap;align-items:center;gap:12px;min-height:72px;padding:12px 18px;border-bottom:1px solid var(--line)}
+.product-barcode-search+.table-card .table-list-search-wrap{width:min(100%,420px);min-width:min(260px,100%);margin:0}
+.product-barcode-search+.table-card .table-list-search-wrap input{height:48px;min-height:48px}
+.product-barcode-search+.table-card .table-list-tools>button,.product-barcode-search+.table-card .table-list-tools>.secondary-button{height:42px;min-height:42px}
+.product-barcode-search+.table-card .actions-cell{white-space:nowrap}
+.product-barcode-search+.table-card .actions-cell .icon-button{width:44px;min-width:44px;height:44px;min-height:44px;margin:0 3px}
+.page:has(.product-barcode-search)>.page-heading{align-items:center}
+@media(max-width:760px){.product-barcode-search{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch}.product-barcode-search>label{grid-column:1/-1}.product-barcode-search>button{width:100%;min-width:0}.product-barcode-search+.table-card .table-list-tools{align-items:stretch}.product-barcode-search+.table-card .table-list-search-wrap{width:100%;min-width:0}.page:has(.product-barcode-search)>.page-heading{align-items:flex-start}}
+@media(max-width:480px){.product-barcode-search{grid-template-columns:1fr;padding:13px}.product-barcode-search>label,.product-barcode-search>button{grid-column:1}.product-barcode-search+.table-card .table-list-tools{padding:12px}.product-barcode-search+.table-card .actions-cell .icon-button{width:40px;min-width:40px;height:40px;min-height:40px}}
+
+/* Category manager controls share consistent dimensions */
+.category-manager{padding-inline:18px}
+.category-create-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 190px;align-items:end;gap:12px;padding:16px}
+.category-create-form label{min-width:0;min-height:68px;align-content:end;gap:8px;line-height:1.35}
+.category-create-form input,.category-create-form select,.category-create-form>button{width:100%;height:48px;min-height:48px;margin:0}
+.category-chip-list{grid-template-columns:1fr;gap:10px;margin-top:14px}
+.category-chip{min-height:68px;gap:16px;padding:12px 16px}
+.category-chip>span{min-width:0;flex:1;gap:5px;line-height:1.4}
+.category-chip>span>b{font-size:14px;line-height:1.4}
+.category-chip small{font-size:12px;line-height:1.4}
+.category-chip form{flex:none}
+.category-chip .danger-link{width:82px;height:42px;min-height:42px;padding:8px 12px;border-radius:10px;font-size:12px}
+@media(max-width:680px){.category-create-form{grid-template-columns:minmax(0,1fr);gap:10px}.category-create-form label{min-height:0}.category-chip{min-height:64px;padding:11px 12px}.category-chip>span>b{font-size:13px}}
+
+/* Shared compact toggle switches for checkbox and radio inputs. */
+input[type=checkbox],input[type=radio]{appearance:none!important;-webkit-appearance:none!important;position:relative;width:42px!important;min-width:42px!important;height:24px!important;min-height:24px!important;margin:0!important;padding:0!important;flex:none;border:0!important;border-radius:999px!important;background:#cbd2de!important;box-shadow:inset 0 1px 2px #18243b18!important;cursor:pointer;transition:background-color .18s ease,box-shadow .18s ease}
+input[type=checkbox]::before,input[type=radio]::before{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #14213b38;transition:transform .18s cubic-bezier(.2,.75,.25,1)}
+input[type=checkbox]:checked,input[type=radio]:checked{background:#14a879!important;box-shadow:inset 0 1px 2px #08704c2b!important}
+input[type=checkbox]:checked::before,input[type=radio]:checked::before{transform:translateX(18px)}
+input[type=checkbox]:hover:not(:disabled),input[type=radio]:hover:not(:disabled){filter:brightness(.97)}
+input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:3px solid #4c61e833!important;outline-offset:3px}
+input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.55;cursor:not-allowed}
+.check-label{flex-direction:row-reverse;justify-content:space-between}

@@ -1,37 +1,122 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
 
 const data = ref(null);
 const user = ref(currentUser());
 const error = ref('');
+const dateLabel = new Intl.DateTimeFormat('hy-AM', { dateStyle: 'long' }).format(new Date());
+
 onMounted(async () => {
     try { data.value = (await api.get('dashboard')).data.data; }
     catch (e) { error.value = e.response?.data?.message || 'Վահանակի տվյալները չհաջողվեց բեռնել։'; }
 });
 onMounted(() => window.addEventListener('lager:user', (event) => { user.value = event.detail; }));
+
+const can = (permission) => Boolean(user.value?.permissions?.[permission]);
+const formatNumber = (value, maximumFractionDigits = 0) => Number(value || 0).toLocaleString('hy-AM', { maximumFractionDigits });
 const cards = computed(() => [
-    ['Ապրանքային տեսակներ', 'products', 'Տեսականիի ակտիվ գրառումներն ըստ ձեր պահեստի', 'blue', 'box'],
-    ['Պահեստի միավորներ', 'units', 'Ընդհանուր հասանելի քանակ', 'violet', 'boxes'],
-    ...(user.value?.permissions?.['purchases.view'] ? [['Պահեստի հաշվեկշիռ', 'stock_value', 'Մնացորդի արժեքը դրամով', 'green', 'chart']] : []),
-    ['Ցածր մնացորդ', 'low_stock_products', 'MIN շեմից ցածր ապրանքներ', 'amber', 'trendDown'],
-    ['Զրոյական մնացորդ', 'zero_stock_products', 'Ակտիվ ապրանքներ՝ առանց մնացորդի', 'rose', 'box'],
-    ['Ժամկետանց LOT', 'expired_lots', 'Դուրսգրման կամ ստուգման ենթակա', 'rose', 'clock'],
-    ['Մոտ ժամկետանց LOT', 'expiring_lots', 'Առաջիկա 90 օրվա ժամկետներ', 'amber', 'clock'],
-    ['Բաց պահանջագրեր', 'open_requests', 'Չփակված պահանջագրեր', 'blue', 'plusFile'],
-    ['Չհաստատված պահանջագրեր', 'unapproved_requests', 'Ստուգման փուլում կամ սպասում են', 'violet', 'clipboard'],
-    ['Սպասվող ստացումներ', 'awaiting_receipt_requests', 'Ուղարկված՝ դեռ չընդունված', 'green', 'arrowDown'],
-]);
-const branches = computed(() => data.value?.branches || []);
-const today = computed(() => data.value?.today || {});
+    { label: 'Ապրանքային տեսակներ', key: 'products', hint: 'Ապրանքներ՝ ձեր պահեստում', tone: 'blue', icon: 'box', permission: 'stock.view' },
+    { label: 'Պահեստի միավորներ', key: 'units', hint: 'Ընդհանուր ընթացիկ մնացորդ', tone: 'green', icon: 'boxes', permission: 'stock.view', decimals: 3 },
+    { label: 'Պաշարի արժեք', key: 'stock_value', hint: 'Ըստ գրանցված ինքնարժեքի', tone: 'violet', icon: 'chart', permission: 'purchases.view', suffix: ' ֏' },
+    { label: 'Ցածր մնացորդ', key: 'low_stock_products', hint: 'MIN շեմից ցածր ապրանքներ', tone: 'amber', icon: 'trendDown', permission: 'stock.view', to: '/stock' },
+    { label: 'Մոտ ժամկետանց LOT', key: 'expiring_lots', hint: 'Առաջիկա 90 օրվա ընթացքում', tone: 'rose', icon: 'clock', permission: 'expiry.view', to: '/expiry' },
+    { label: 'Բաց պահանջագրեր', key: 'open_requests', hint: 'Ընթացքում գտնվող պահանջագրեր', tone: 'blue', icon: 'plusFile', permission: 'requests.view', to: '/requests' },
+].filter((card) => can(card.permission) && data.value && Object.hasOwn(data.value, card.key)));
+
+const secondaryMetrics = computed(() => [
+    { label: 'Զրոյական մնացորդ', key: 'zero_stock_products', icon: 'box', tone: 'rose', permission: 'stock.view', to: '/stock' },
+    { label: 'Ժամկետանց LOT', key: 'expired_lots', icon: 'alert', tone: 'amber', permission: 'expiry.view', to: '/expiry' },
+    { label: 'Չհաստատված պահանջագրեր', key: 'unapproved_requests', icon: 'clipboard', tone: 'violet', permission: 'requests.view', to: '/requests' },
+    { label: 'Սպասվող ընդունում', key: 'awaiting_receipt_requests', icon: 'arrowDown', tone: 'green', permission: 'requests.view', to: '/requests' },
+].filter((metric) => can(metric.permission) && data.value && Object.hasOwn(data.value, metric.key)));
+
+const activity = computed(() => [
+    { label: 'Մուտքեր', key: 'receipts', icon: 'arrowDown', tone: 'green', permission: 'receipts.view' },
+    { label: 'Ելքեր', key: 'issues', icon: 'trendUp', tone: 'amber', permission: 'movements.view' },
+    { label: 'Վերադարձներ', key: 'returns', icon: 'returns', tone: 'violet', permission: 'returns.view' },
+    { label: 'Տեղափոխումներ', key: 'transfers', icon: 'transfers', tone: 'blue', permission: 'transfers.view' },
+].filter((item) => can(item.permission) && data.value?.today && Object.hasOwn(data.value.today, item.key)));
+
+const maxActivity = computed(() => Math.max(1, ...activity.value.map((item) => Number(data.value?.today?.[item.key] || 0))));
+const branches = computed(() => can('branches.view') ? data.value?.branches || [] : []);
+const userName = computed(() => user.value?.name?.trim().split(/\s+/)[0] || 'բարի գալուստ');
+const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 'full' }).format(new Date()));
 </script>
 
 <template>
-    <div class="page-heading"><div><p class="eyebrow">ՊԱՀԵՍՏԻ ԱՄՓՈՓՈՒՄ</p><h1>Գլխավոր վահանակ</h1><p class="muted">Օպերացիոն պատկերը՝ ըստ ձեր հասանելի պահեստի։</p></div><div class="date-chip"><span class="online-dot"></span>Աշխատանքային համակարգ</div></div>
     <div v-if="error" class="alert-error" role="alert">{{ error }}</div>
-    <div class="metric-grid"><article v-for="[label, key, hint, color, icon] in cards" :key="key" class="metric-card"><div class="metric-top"><span class="metric-icon" :class="color"><AppIcon :name="icon" /></span><span class="metric-trend">ԸՆԹԱՑԻԿ</span></div><p>{{ label }}</p><strong v-if="data" class="metric-value">{{ Number(data[key]).toLocaleString('hy-AM') }}</strong><div v-else class="metric-skeleton"></div><small>{{ hint }}</small></article></div>
-    <section class="dashboard-activity"><header><div><p class="eyebrow">ՕՐՎԱ ԳՈՐԾՈՂՈՒԹՅՈՒՆՆԵՐ</p><h2>Այսօրվա շարժը</h2></div><span class="muted">{{ new Date().toLocaleDateString('hy-AM') }}</span></header><div class="activity-grid"><article><span class="activity-icon green"><AppIcon name="arrowDown" /></span><div><small>Մուտքեր</small><strong>{{ today.receipts ?? '—' }}</strong></div></article><article><span class="activity-icon amber"><AppIcon name="trendUp" /></span><div><small>Ելքեր</small><strong>{{ today.issues ?? '—' }}</strong></div></article><article><span class="activity-icon violet"><AppIcon name="returns" /></span><div><small>Վերադարձներ</small><strong>{{ today.returns ?? '—' }}</strong></div></article><article><span class="activity-icon blue"><AppIcon name="transfers" /></span><div><small>Տեղափոխումներ</small><strong>{{ today.transfers ?? '—' }}</strong></div></article></div></section>
-    <section v-if="branches.length" class="dashboard-branches"><header><div><p class="eyebrow">ՄԱՍՆԱՃՅՈՒՂԵՐ</p><h2>Պահեստների վիճակ</h2></div><span class="muted">{{ branches.length }} ակտիվ մասնաճյուղ</span></header><div class="table-scroll"><table class="data-table"><thead><tr><th>Մասնաճյուղ</th><th>Մնացորդ</th><th>Բաց պահանջագիր</th><th>Չհաստատված</th><th>Սպասվող ընդունում</th><th>Տեղափոխման ընդունում</th></tr></thead><tbody><tr v-for="branch in branches" :key="branch.branch_id"><td><strong>{{ branch.branch }}</strong></td><td>{{ Number(branch.stock_units).toLocaleString('hy-AM',{maximumFractionDigits:3}) }}</td><td>{{ branch.open_requests }}</td><td>{{ branch.unapproved_requests }}</td><td>{{ branch.awaiting_receipt_requests }}</td><td>{{ branch.awaiting_transfer_receipts }}</td></tr><tr v-if="!branches.length"><td colspan="6" class="table-empty">Ակտիվ մասնաճյուղ չկա։</td></tr></tbody></table></div></section>
-    <article class="welcome-card"><div class="welcome-art"><span class="art-square one"></span><span class="art-square two"></span><span class="art-square three"></span></div><div><span class="eyebrow">ԴԻԱԳԵՆ ՊԼՅՈՒՍ</span><h2>Մատակարարումից մինչև մասնաճյուղ՝ վերահսկելի մեկ հոսքով։</h2><p class="muted">Ընտրեք բաժինը ձախ ցանկից՝ ընթացիկ պահեստային աշխատանքը շարունակելու համար։</p></div></article>
+
+    <section class="dashboard-hero">
+        <div class="dashboard-hero-copy">
+            <p class="dashboard-hero-kicker"><span></span> ԴԻԱԳԵՆ ՊԼՅՈՒՍ · ՊԱՀԵՍՏԻ ՎԵՐԱՀՍԿՈՒՄ</p>
+            <h1>Բարի գալուստ, {{ userName }}</h1>
+            <p class="dashboard-hero-description">Պահեստի ընթացիկ պատկերը և օրվա հիմնական գործողությունները՝ մեկ տեղում։</p>
+            <div class="dashboard-hero-meta"><span><AppIcon name="clock" /> {{ todayLabel }}</span><span>{{ user?.branch?.name || 'Կենտրոնական պահեստ' }}</span></div>
+        </div>
+        <div class="dashboard-hero-panel">
+            <div class="dashboard-hero-panel-top"><span>ՊԱՀԵՍՏԻ ՄՆԱՑՈՐԴ</span><AppIcon name="boxes" /></div>
+            <template v-if="can('stock.view') && data">
+                <strong>{{ formatNumber(data.units, 3) }}</strong>
+                <small>ընդհանուր միավոր · {{ formatNumber(data.products) }} ապրանքատեսակ</small>
+            </template>
+            <div v-else class="dashboard-hero-loading">Տվյալը հասանելի չէ</div>
+            <div class="dashboard-hero-actions">
+                <RouterLink v-if="can('requests.create')" to="/requests" class="dashboard-hero-action dashboard-hero-action-primary"><AppIcon name="plusFile" /> Նոր պահանջագիր</RouterLink>
+                <RouterLink v-if="can('stock.view')" to="/stock" class="dashboard-hero-action"><AppIcon name="boxes" /> Բացել մնացորդները</RouterLink>
+                <RouterLink v-else-if="can('reports.view')" to="/reports" class="dashboard-hero-action"><AppIcon name="chart" /> Բացել հաշվետվությունները</RouterLink>
+            </div>
+        </div>
+        <div class="dashboard-hero-orbit" aria-hidden="true"></div>
+    </section>
+
+    <section class="dashboard-metrics" aria-label="Պահեստի հիմնական ցուցանիշներ">
+        <article v-for="card in cards" :key="card.key" class="dashboard-metric-card" :class="`tone-${card.tone}`">
+            <div class="dashboard-metric-accent"></div>
+            <div class="dashboard-metric-top"><span class="dashboard-metric-icon"><AppIcon :name="card.icon" /></span><span class="dashboard-metric-caption">ԸՆԹԱՑԻԿ</span></div>
+            <p>{{ card.label }}</p>
+            <strong>{{ formatNumber(data[card.key], card.decimals) }}{{ card.suffix || '' }}</strong>
+            <small>{{ card.hint }}</small>
+            <RouterLink v-if="card.to" :to="card.to" class="dashboard-card-link" :aria-label="`${card.label} բաժինը բացել`"><AppIcon name="arrowRight" /></RouterLink>
+        </article>
+        <template v-if="!data && !error"><article v-for="item in 4" :key="item" class="dashboard-metric-skeleton" aria-hidden="true"><span></span><i></i><i></i></article></template>
+        <article v-else-if="!cards.length && data && !error" class="dashboard-metric-placeholder"><AppIcon name="dashboard" /><span>Ձեր դերի համար ցուցանիշներ հասանելի չեն։</span></article>
+    </section>
+
+    <section v-if="secondaryMetrics.length" class="dashboard-secondary-metrics" aria-label="Լրացուցիչ ցուցանիշներ">
+        <RouterLink v-for="metric in secondaryMetrics" :key="metric.key" :to="metric.to" class="dashboard-secondary-card" :class="`tone-${metric.tone}`">
+            <span class="dashboard-secondary-icon"><AppIcon :name="metric.icon" /></span>
+            <span class="dashboard-secondary-copy"><small>{{ metric.label }}</small><strong>{{ formatNumber(data[metric.key]) }}</strong></span>
+            <AppIcon name="arrowRight" class="dashboard-secondary-arrow" />
+        </RouterLink>
+    </section>
+
+    <section v-if="activity.length" class="dashboard-lower-grid">
+        <article class="dashboard-panel dashboard-activity-chart">
+            <header class="dashboard-panel-header"><div><p class="eyebrow">ՕՐՎԱ ԳՈՐԾՈՂՈՒԹՅՈՒՆՆԵՐ</p><h2>Այսօրվա շարժը</h2></div><span class="dashboard-panel-date">{{ dateLabel }}</span></header>
+            <div class="dashboard-activity-bars">
+                <div v-for="item in activity" :key="item.key" class="dashboard-activity-row">
+                    <span class="dashboard-activity-label"><i :class="`tone-${item.tone}`"><AppIcon :name="item.icon" /></i>{{ item.label }}</span>
+                    <span class="dashboard-activity-track"><span :class="`tone-${item.tone}`" :style="{ width: `${(Number(data.today[item.key] || 0) / maxActivity) * 100}%` }"></span></span>
+                    <strong>{{ formatNumber(data.today[item.key]) }}</strong>
+                </div>
+            </div>
+            <p class="dashboard-panel-footnote">Գործողությունների քանակը՝ ըստ ձեր դերի հասանելի բաժինների։</p>
+        </article>
+
+        <article v-if="secondaryMetrics.length" class="dashboard-panel dashboard-attention-panel">
+            <header class="dashboard-panel-header"><div><p class="eyebrow">ՈՒՇԱԴՐՈՒԹՅԱՆ ԿԵՏԵՐ</p><h2>Արագ վերահսկում</h2></div><span class="dashboard-attention-icon"><AppIcon name="alert" /></span></header>
+            <RouterLink v-for="metric in secondaryMetrics.slice(0, 3)" :key="metric.key" :to="metric.to" class="dashboard-attention-row">
+                <span :class="`dashboard-attention-mark tone-${metric.tone}`"><AppIcon :name="metric.icon" /></span><span>{{ metric.label }}</span><strong>{{ formatNumber(data[metric.key]) }}</strong><AppIcon name="arrowRight" class="dashboard-secondary-arrow" />
+            </RouterLink>
+            <p class="dashboard-panel-footnote">Ընտրեք ցուցանիշը՝ համապատասխան բաժինն անցնելու համար։</p>
+        </article>
+    </section>
+
+    <section v-if="branches.length" class="dashboard-panel dashboard-branches">
+        <header class="dashboard-panel-header"><div><p class="eyebrow">ՄԱՍՆԱՃՅՈՒՂԵՐ</p><h2>Պահեստների վիճակ</h2></div><span class="dashboard-panel-date">{{ branches.length }} ակտիվ մասնաճյուղ</span></header>
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Մասնաճյուղ</th><th>Մնացորդ</th><th>Բաց պահանջագիր</th><th>Չհաստատված</th><th>Սպասվող ընդունում</th><th>Տեղափոխման ընդունում</th></tr></thead><tbody><tr v-for="branch in branches" :key="branch.branch_id"><td><strong>{{ branch.branch }}</strong></td><td>{{ formatNumber(branch.stock_units, 3) }}</td><td>{{ branch.open_requests }}</td><td>{{ branch.unapproved_requests }}</td><td>{{ branch.awaiting_receipt_requests }}</td><td>{{ branch.awaiting_transfer_receipts }}</td></tr><tr v-if="!branches.length"><td colspan="6" class="table-empty">Ակտիվ մասնաճյուղ չկա։</td></tr></tbody></table></div>
+    </section>
 </template>

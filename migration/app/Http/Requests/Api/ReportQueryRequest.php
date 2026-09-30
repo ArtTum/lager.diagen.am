@@ -21,7 +21,7 @@ class ReportQueryRequest extends FormRequest
     {
         return [
             'report_type' => ['nullable', Rule::in(array_keys(ReportService::types()))],
-            'format' => ['nullable', 'in:csv,xlsx'],
+            'format' => ['nullable', 'in:csv,xlsx,pdf'],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'branch_id' => [

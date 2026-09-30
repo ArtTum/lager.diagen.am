@@ -67,6 +67,10 @@ class InventoryWorkflowApiTest extends TestCase
         self::assertEquals(5.0, (float) $lines[$existingProduct->id]->expected_qty);
         self::assertEquals(0.0, (float) $lines[$unstockedProduct->id]->expected_qty);
 
+        $this->putJson("/api/inventory/{$sessionId}/count", [])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'գույքագրման քանակների ցանկը դաշտը պարտադիր է։');
+
         $this->putJson("/api/inventory/{$sessionId}/count", [
             'counts' => [
                 $lines[$existingProduct->id]->id => ['counted_qty' => 4, 'reason' => 'Մեկ միավոր պակաս է'],

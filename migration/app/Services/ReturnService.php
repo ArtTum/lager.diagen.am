@@ -44,6 +44,15 @@ class ReturnService
         if ($location > 0) {
             $query->where('from_location', $location);
         }
+        if (filled($filters['direction'] ?? null)) {
+            $query->where('direction', $filters['direction']);
+        }
+        if (filled($filters['from'] ?? null)) {
+            $query->whereDate('created_at', '>=', $filters['from']);
+        }
+        if (filled($filters['to'] ?? null)) {
+            $query->whereDate('created_at', '<=', $filters['to']);
+        }
         if ($search = trim((string) ($filters['search'] ?? ''))) {
             $query->where(fn ($where) => $where->where('return_no', 'like', "%{$search}%")
                 ->orWhere('direction', 'like', "%{$search}%")
@@ -113,7 +122,11 @@ class ReturnService
                 // reservation from that supplier's own LOT quantity.
                 $allowed = $expired + min($eligibleUnexpired, $freeUnexpired);
                 if ($requested > $allowed + 0.00001) {
-                    throw ValidationException::withMessages(['items' => ["{$item['product_id']} ապրանքի վերադարձի համար ազատ մնացորդը բավարար չէ։"]]);
+                    $format = static fn (float $quantity): string => rtrim(rtrim(number_format($quantity, 3, '.', ''), '0'), '.');
+                    $label = $this->returns->productLabel($productId);
+                    throw ValidationException::withMessages(['items' => [
+                        '«'.$label.'» ապրանքի վերադարձի համար մնացորդը բավարար չէ։ Պահանջված՝ '.$format($requested).'։ Այժմ վերադարձի առավելագույն հասանելի քանակը՝ '.$format($allowed).'.',
+                    ]]);
                 }
 
                 $remaining = $requested;

@@ -2,9 +2,10 @@
 
 namespace Tests\Unit;
 
-use App\Repositories\PageDataRepository;
 use App\Repositories\NotificationRepository;
+use App\Repositories\PageDataRepository;
 use App\Repositories\ReportRepository;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -136,51 +137,65 @@ class CentralLocationLabelsTest extends TestCase
     }
 }
 
-class BranchFixture extends \Illuminate\Database\Eloquent\Model
+class BranchFixture extends Model
 {
     protected $table = 'branches';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class ProductFixture extends \Illuminate\Database\Eloquent\Model
+class ProductFixture extends Model
 {
     protected $table = 'products';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class StockLotFixture extends \Illuminate\Database\Eloquent\Model
+class StockLotFixture extends Model
 {
     protected $table = 'stock_lots';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class MovementFixture extends \Illuminate\Database\Eloquent\Model
+class MovementFixture extends Model
 {
     protected $table = 'movements';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class InventoryFixture extends \Illuminate\Database\Eloquent\Model
+class InventoryFixture extends Model
 {
     protected $table = 'inventory_sessions';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class InventoryLineFixture extends \Illuminate\Database\Eloquent\Model
+class InventoryLineFixture extends Model
 {
     protected $table = 'inventory_lines';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
 
-class UserFixture extends \Illuminate\Database\Eloquent\Model
+class UserFixture extends Model
 {
     protected $table = 'users';
+
     public $timestamps = false;
+
     protected $guarded = [];
 }
