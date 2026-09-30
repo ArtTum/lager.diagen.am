@@ -6,6 +6,7 @@
 /migration/.env
 /migration/.env.*
 !/migration/.env.example
+!/migration/.env.production.example
 /migration/vendor/
 /migration/node_modules/
 /migration/public/build/

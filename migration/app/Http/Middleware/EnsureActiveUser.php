@@ -10,7 +10,16 @@ class EnsureActiveUser
 {
     public function handle(Request $request, Closure $next): Response
     {
-        abort_unless($request->user()?->active, 403, 'Օգտահաշիվն ապաակտիվացված է։ Դիմեք համակարգի ադմինիստրատորին։');
+        $user = $request->user();
+        if (! $user?->active) {
+            $token = $user?->currentAccessToken();
+            if ($token && method_exists($token, 'delete')) {
+                $token->delete();
+            }
+
+            abort(401, 'Օգտահաշիվն ապաակտիվացված է։ Կրկին մուտք գործել հնարավոր չէ։ Դիմեք համակարգի ադմինիստրատորին։');
+        }
+
         return $next($request);
     }
 }

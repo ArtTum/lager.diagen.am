@@ -3,10 +3,13 @@
 namespace App\Repositories;
 
 use App\Models\AuditLog;
+use App\Models\Branch;
 use App\Models\Movement;
+use App\Models\Product;
 use App\Models\StockLot;
 use App\Models\StockRequest;
 use App\Models\StockRequestItem;
+use App\Models\TransferItem;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -25,22 +28,30 @@ class StockRequestRepository
 
     public function findWithItems(int $id): ?StockRequest
     {
-        $request = StockRequest::query()->with('branch')->find($id);
-        if (!$request) return null;
+        $request = StockRequest::query()->with(['branch', 'requester:id,name', 'sender:id,name', 'receiver:id,name'])->find($id);
+        if (! $request) {
+            return null;
+        }
         $request->setAttribute('branch_name', $request->branch?->name);
         $request->setRelation('items', $this->items($id));
+
         return $request;
     }
 
     public function items(int $requestId, bool $lock = false): Collection
     {
         $query = StockRequestItem::query()->with('product')->where('request_id', $requestId)->orderBy('product_id');
-        if ($lock) $query->lockForUpdate();
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
         return $query->get()->map(static function (StockRequestItem $item): StockRequestItem {
             $item->setAttribute('code', $item->product?->code);
             $item->setAttribute('name', $item->product?->name);
             $item->setAttribute('unit', $item->product?->unit);
             $item->setAttribute('expiry_control', $item->product?->expiry_control);
+            $item->unsetRelation('product');
+
             return $item;
         });
     }
@@ -76,12 +87,47 @@ class StockRequestRepository
 
     public function branchIsActive(int $branchId): bool
     {
-        return \App\Models\Branch::query()->whereKey($branchId)->where('active', true)->exists();
+        return Branch::query()->whereKey($branchId)->where('active', true)->exists();
     }
 
     public function productIsActive(int $productId): bool
     {
-        return \App\Models\Product::query()->whereKey($productId)->where('active', true)->exists();
+        return Product::query()->whereKey($productId)->where('active', true)->exists();
+    }
+
+    /** @return array<int, array{current: float, suggested: float, average: float}> */
+    public function suggestionsForBranch(int $branchId, ?array $productIds = null): array
+    {
+        $today = now()->toDateString();
+        $since = now()->subDays(90)->startOfDay();
+        $products = Product::query()->when(
+            $productIds === null,
+            fn (Builder $query) => $query->where('active', true),
+            fn (Builder $query) => $query->whereIn('id', $productIds),
+        )
+            ->select(['id', 'optimal_qty'])
+            ->addSelect([
+                'current_qty' => StockLot::query()->selectRaw('COALESCE(SUM(qty), 0)')
+                    ->whereColumn('stock_lots.product_id', 'products.id')
+                    ->where('location_id', $branchId)->where('qty', '>', 0)
+                    ->where(fn (Builder $query) => $query->whereNull('expires_on')->orWhere('expires_on', '>=', $today)),
+                'consumed_qty' => Movement::query()->selectRaw('COALESCE(SUM(qty), 0)')
+                    ->whereColumn('movements.product_id', 'products.id')
+                    ->where('type', 'consumption')->where('reason', 'Ներքին օգտագործում')
+                    ->where('from_location', $branchId)->where('happened_at', '>=', $since),
+            ])->get();
+
+        $suggestions = [];
+        foreach ($products as $product) {
+            $current = (float) $product->current_qty;
+            $suggestions[(int) $product->id] = [
+                'current' => $current,
+                'suggested' => max(0, (float) $product->optimal_qty - $current),
+                'average' => (float) $product->consumed_qty / 3,
+            ];
+        }
+
+        return $suggestions;
     }
 
     public function centralFreeStock(int $productId, int $excludeRequest): float
@@ -93,9 +139,10 @@ class StockRequestRepository
         $requests = (float) StockRequestItem::query()->join('stock_requests as r', 'r.id', '=', 'request_items.request_id')
             ->where('product_id', $productId)->where('r.id', '<>', $excludeRequest)
             ->whereIn('r.status', ['approved', 'partially_approved', 'collecting', 'ready_to_ship'])->sum('approved_qty');
-        $centralId = (int) \App\Models\Branch::query()->where('code', 'CENTRAL')->value('id');
-        $transfers = (float) \App\Models\TransferItem::query()->join('transfers as t', 't.id', '=', 'transfer_items.transfer_id')
-            ->where('product_id', $productId)->where('t.from_branch', $centralId)->where('t.status', 'approved')->sum('qty');
+        $centralId = (int) Branch::query()->where('code', 'CENTRAL')->value('id');
+        $transfers = (float) TransferItem::query()->join('transfers as t', 't.id', '=', 'transfer_items.transfer_id')
+            ->where('transfer_items.product_id', $productId)->where('t.from_branch', $centralId)->where('t.status', 'approved')->sum('transfer_items.qty');
+
         return max(0, $physical - $requests - $transfers);
     }
 
@@ -109,8 +156,15 @@ class StockRequestRepository
     public function matchingLot(int $product, int $location, string $lot, ?string $expiresOn, bool $lock = true): ?StockLot
     {
         $query = StockLot::query()->where('product_id', $product)->where('location_id', $location)->where('lot_no', $lot)
-            ->whereRaw("IFNULL(expires_on, '1000-01-01') = IFNULL(?, '1000-01-01')", [$expiresOn]);
-        if ($lock) $query->lockForUpdate();
+            ->when(
+                $expiresOn === null,
+                fn ($query) => $query->whereNull('expires_on'),
+                fn ($query) => $query->whereDate('expires_on', $expiresOn),
+            );
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
         return $query->first();
     }
 

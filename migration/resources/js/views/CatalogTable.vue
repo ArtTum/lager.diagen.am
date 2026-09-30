@@ -3,6 +3,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import { canCreateRecord } from '@/permissions';
+import ExportActions from '@/components/ExportActions.vue';
+import BarcodeScanner from '@/components/BarcodeScanner.vue';
 
 const route = useRoute();
 const result = ref(null);
@@ -10,9 +13,21 @@ const options = ref({});
 const busy = ref(false);
 const saving = ref(false);
 const modal = ref(false);
+const traceOpen = ref(false);
+const categoriesOpen = ref(false);
+const categorySaving = ref(false);
+const categoryBusy = ref(false);
+const categoryError = ref('');
+const categoryNotice = ref('');
+const categoryName = ref('');
+const categoryParent = ref('');
+const traceBusy = ref(false);
+const traceData = ref(null);
+const tracePages = reactive({ lots: 1, movements: 1, requests: 1 });
 const error = ref('');
 const notice = ref('');
 const search = ref('');
+const barcodeSearch = ref('');
 const selected = ref(null);
 const me = ref(currentUser());
 const fieldsByPage = {
@@ -43,7 +58,8 @@ const form = reactive({});
 const page = computed(() => route.path.slice(1));
 const title = computed(() => route.meta.title || 'Կառավարում');
 const modulePermission = (action) => Boolean(me.value?.permissions?.[`${page.value}.${action}`]);
-const fields = computed(() => fieldsByPage[page.value] || []);
+const canCreate = computed(() => canCreateRecord(page.value, me.value?.permissions));
+const fields = computed(() => (fieldsByPage[page.value] || []).filter(([key]) => key !== 'purchase_price' || Boolean(me.value?.permissions?.['purchases.view'])));
 const rows = computed(() => result.value?.data || []);
 const permissionsByModule = computed(() => (options.value.permissions || []).reduce((groups, item) => {
     (groups[item.module] ||= []).push(item);
@@ -54,20 +70,66 @@ let timer;
 async function load(pageNo = 1) {
     busy.value = true; error.value = '';
     try {
-        const response = await api.get(`pages/${page.value}`, { params: { page: pageNo, search: search.value || undefined } });
+        const response = await api.get(`pages/${page.value}`, { params: {
+            page: pageNo,
+            search: search.value || undefined,
+            barcode: page.value === 'products' ? (barcodeSearch.value.trim() || undefined) : undefined,
+        } });
         result.value = response.data;
     } catch (e) { error.value = e.response?.data?.message || 'Ցանկը չհաջողվեց բեռնել։'; }
     finally { busy.value = false; }
 }
 
 watch(search, () => { clearTimeout(timer); timer = setTimeout(() => load(1), 250); });
-watch(page, () => { result.value = null; search.value = ''; load(1); });
+watch(page, () => { result.value = null; search.value = ''; barcodeSearch.value = ''; load(1); });
 onMounted(() => { load(); window.addEventListener('lager:user', (event) => { me.value = event.detail; }); });
+
+function applyScannedBarcode(value) {
+    barcodeSearch.value = value;
+    load(1);
+}
+
+function clearBarcodeSearch() {
+    barcodeSearch.value = '';
+    load(1);
+}
 
 async function loadOptions() {
     if (page.value === 'branches') return;
     const response = await api.get(`catalog/${page.value}/options`);
     options.value = response.data.data;
+}
+
+async function openCategories() {
+    categoryError.value = ''; categoryNotice.value = ''; categoryBusy.value = true;
+    try {
+        const response = await api.get('catalog/products/options');
+        options.value = response.data.data;
+        categoriesOpen.value = true;
+    } catch (e) { categoryError.value = e.response?.data?.message || 'Ապրանքային խմբերը չհաջողվեց բեռնել։'; }
+    finally { categoryBusy.value = false; }
+}
+
+async function saveCategory() {
+    if (categorySaving.value || !categoryName.value.trim()) return;
+    categorySaving.value = true; categoryError.value = ''; categoryNotice.value = '';
+    try {
+        await api.post('categories', { name: categoryName.value.trim(), parent_id: categoryParent.value || null });
+        categoryName.value = ''; categoryParent.value = '';
+        const response = await api.get('catalog/products/options'); options.value = response.data.data;
+        categoryNotice.value = 'Ապրանքային խումբը ավելացվեց։';
+    } catch (e) { categoryError.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Խումբը չպահպանվեց։'; }
+    finally { categorySaving.value = false; }
+}
+
+async function removeCategory(category) {
+    if (!window.confirm(`Ջնջե՞լ «${category.name}» ապրանքային խումբը։`)) return;
+    categoryError.value = ''; categoryNotice.value = '';
+    try {
+        await api.delete(`categories/${category.id}`);
+        const response = await api.get('catalog/products/options'); options.value = response.data.data;
+        categoryNotice.value = 'Ապրանքային խումբը ջնջվեց։';
+    } catch (e) { categoryError.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Խումբը չջնջվեց։'; }
 }
 
 async function openCreate() {
@@ -108,9 +170,46 @@ async function deactivate(row) {
     catch (e) { error.value = e.response?.data?.message || 'Գրառումը չհաջողվեց ապաակտիվացնել։'; }
 }
 
+async function openTrace(row) {
+    traceOpen.value = true;
+    traceData.value = null;
+    tracePages.lots = 1;
+    tracePages.movements = 1;
+    tracePages.requests = 1;
+    error.value = '';
+    await loadTrace(row.id);
+}
+
+async function loadTrace(productId) {
+    traceBusy.value = true;
+    error.value = '';
+    try {
+        const response = await api.get(`products/${productId}/history`, { params: {
+            lots_page: tracePages.lots,
+            movements_page: tracePages.movements,
+            requests_page: tracePages.requests,
+        } });
+        traceData.value = response.data.data;
+    } catch (e) {
+        error.value = e.response?.data?.message || 'Ապրանքի հետագիծը չհաջողվեց բեռնել։';
+    } finally { traceBusy.value = false; }
+}
+
+function changeTracePage(list, pageNumber) {
+    tracePages[list] = pageNumber;
+    loadTrace(traceData.value.product.id);
+}
+
+function openLabel(row) {
+    window.open(`/products/${row.id}/label`, '_blank', 'noopener');
+}
+
 function selectOptions(type) {
     const items = type === 'categories' ? options.value.categories : type === 'suppliers' ? options.value.suppliers : type === 'branches' ? options.value.branches : options.value.roles;
     return items || [];
+}
+function categoryParentName(category) {
+    return (options.value.categories || []).find((item) => Number(item.id) === Number(category.parent_id))?.name || '';
 }
 function cell(row, key) {
     const value = row[key];
@@ -121,17 +220,32 @@ function cell(row, key) {
 </script>
 
 <template>
-    <div class="page-heading"><div><p class="eyebrow">ՀԱՄԱԿԱՐԳԻ ԿԱՌԱՎԱՐՈՒՄ</p><h1>{{ title }}</h1><p class="muted">Պահպանեք տվյալները միասնական ցանկում՝ պահպանելով գործողությունների պատմությունը։</p></div><button v-if="modulePermission('create')" class="primary-button" @click="openCreate"><span>＋</span>{{ page === 'roles' ? 'Ավելացնել դեր' : 'Ավելացնել գրառում' }}</button></div>
+    <div class="page-heading"><div><p class="eyebrow">ՀԱՄԱԿԱՐԳԻ ԿԱՌԱՎԱՐՈՒՄ</p><h1>{{ title }}</h1><p class="muted">Պահպանեք տվյալները միասնական ցանկում՝ պահպանելով գործողությունների պատմությունը։</p></div><div class="page-heading-actions"><button v-if="page === 'products' && (modulePermission('create') || modulePermission('delete'))" class="secondary-button" @click="openCategories">Ապրանքային խմբեր</button><button v-if="canCreate" class="primary-button" @click="openCreate"><span><AppIcon name="add" /></span>{{ page === 'roles' ? 'Ավելացնել դեր' : 'Ավելացնել գրառում' }}</button></div></div>
     <div v-if="error && !modal" class="alert-error" role="alert">{{ error }}</div><div v-if="notice" class="notice-success" role="status">{{ notice }}</div>
-    <section class="table-card"><div class="table-toolbar"><label class="search-input"><span>⌕</span><input v-model="search" class="form-control" placeholder="Որոնել ցանկում…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div></div>
+    <section class="table-card">
+        <form v-if="page === 'products'" class="barcode-search-toolbar" @submit.prevent="load(1)">
+            <label class="search-input"><span class="search-icon"><AppIcon name="barcode" /></span><input v-model.trim="barcodeSearch" class="form-control" autocomplete="off" placeholder="Սկանավորեք կամ մուտքագրեք շտրիխ / QR կոդը"></label>
+            <button class="secondary-button" type="submit" :disabled="busy">Գտնել ապրանքը</button>
+            <BarcodeScanner @detected="applyScannedBarcode" />
+            <button v-if="barcodeSearch" class="text-button" type="button" @click="clearBarcodeSearch">Մաքրել կոդը</button>
+        </form>
+        <div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել ցանկում…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions :page="page" :search="search" :barcode="page === 'products' ? barcodeSearch : ''" :disabled="busy" /></div>
         <div class="table-scroll"><table class="data-table"><thead><tr><th v-for="(label,key) in result?.columns || {}" :key="key">{{ label }}</th><th>Գործողություններ</th></tr></thead><tbody>
-            <tr v-for="row in rows" :key="row.id"><td v-for="(label,key) in result?.columns || {}" :key="key"><span v-if="key === 'active'" class="status-pill" :class="{ inactive: !Number(row[key]) }">{{ cell(row,key) }}</span><strong v-else-if="key === 'name' || key === 'title' || key.endsWith('_no')">{{ cell(row,key) }}</strong><span v-else>{{ cell(row,key) }}</span></td><td><div class="table-actions"><button v-if="modulePermission('edit')" class="icon-button" title="Խմբագրել" @click="openEdit(row)">✎</button><button v-if="modulePermission('delete') && row.active" class="icon-button danger" title="Ապաակտիվացնել" @click="deactivate(row)">⌑</button></div></td></tr>
+            <tr v-for="row in rows" :key="row.id"><td v-for="(label,key) in result?.columns || {}" :key="key"><span v-if="key === 'active'" class="status-pill" :class="{ inactive: !Number(row[key]) }">{{ cell(row,key) }}</span><strong v-else-if="key === 'name' || key === 'title' || key.endsWith('_no')">{{ cell(row,key) }}</strong><span v-else>{{ cell(row,key) }}</span></td><td><div class="table-actions"><button v-if="page === 'products' && modulePermission('view')" class="icon-button" title="Ապրանքի հետագիծ" @click="openTrace(row)"><AppIcon name="history" /></button><button v-if="page === 'products' && modulePermission('view')" class="icon-button" title="Տպել պիտակ" @click="openLabel(row)"><AppIcon name="print" /></button><button v-if="modulePermission('edit')" class="icon-button" title="Խմբագրել" @click="openEdit(row)"><AppIcon name="edit" /></button><button v-if="modulePermission('delete') && row.active" class="icon-button danger" title="Ապաակտիվացնել" @click="deactivate(row)"><AppIcon name="trash" /></button></div></td></tr>
             <tr v-if="!busy && result && !rows.length"><td :colspan="Object.keys(result.columns).length+1" class="table-empty">{{ search ? 'Որոնմանը համապատասխան գրառում չկա։' : 'Գրառումներ դեռ չկան։' }}</td></tr>
             <tr v-if="busy && !result"><td colspan="8" class="table-empty">Բեռնվում է…</td></tr>
-        </tbody></table></div><div v-if="result" class="pagination"><span>Ընդամենը՝ {{ result.pagination.total }} գրառում</span><div class="pagination-controls"><button :disabled="result.pagination.current_page<=1 || busy" @click="load(result.pagination.current_page-1)">← Նախորդ</button><span>Էջ {{ result.pagination.current_page }} / {{ result.pagination.last_page }}</span><button :disabled="result.pagination.current_page>=result.pagination.last_page || busy" @click="load(result.pagination.current_page+1)">Հաջորդ →</button></div></div>
+        </tbody></table></div><div v-if="result" class="pagination"><span>Ընդամենը՝ {{ result.pagination.total }} գրառում</span><div class="pagination-controls"><button :disabled="result.pagination.current_page<=1 || busy" @click="load(result.pagination.current_page-1)">Նախորդ</button><span>Էջ {{ result.pagination.current_page }} / {{ result.pagination.last_page }}</span><button :disabled="result.pagination.current_page>=result.pagination.last_page || busy" @click="load(result.pagination.current_page+1)">Հաջորդ</button></div></div>
     </section>
 
-    <div v-if="modal" class="modal-backdrop" @click.self="modal=false" @keydown.esc="modal=false"><form class="modal-card catalog-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՏՎՅԱԼՆԵՐԻ ՔԱՐՏ</p><h2>{{ selected ? 'Խմբագրել գրառումը' : (page === 'roles' ? 'Ստեղծել դեր' : 'Ավելացնել գրառում') }}</h2><p class="muted">Փոփոխությունները կգրանցվեն գործողությունների պատմությունում։</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" @click="modal=false">×</button></div>
+    <div v-if="categoriesOpen" class="modal-backdrop" @click.self="categoriesOpen=false" @keydown.esc="categoriesOpen=false"><section class="modal-card catalog-modal category-modal" role="dialog" aria-modal="true" aria-labelledby="category-title"><header class="modal-header"><div><p class="eyebrow">ԱՊՐԱՆՔՆԵՐԻ ԿԱՌԱՎԱՐՈՒՄ</p><h2 id="category-title">Ապրանքային խմբեր</h2><p class="muted">Խմբերը հասանելի են ապրանքի քարտի ընտրացանկում։ Օգտագործվող խումբը հնարավոր չէ ջնջել։</p></div><button class="icon-button close-button" aria-label="Փակել" @click="categoriesOpen=false"><AppIcon name="xmark" /></button></header>
+        <p v-if="categoryError" class="form-error" role="alert">{{ categoryError }}</p><p v-if="categoryNotice" class="notice-success" role="status">{{ categoryNotice }}</p>
+        <p v-if="categoryBusy" class="table-empty">Խմբերը բեռնվում են…</p>
+        <form v-if="modulePermission('create')" class="category-create-form" @submit.prevent="saveCategory"><label class="form-field">Խմբի անվանում *<input v-model.trim="categoryName" class="form-control" maxlength="120" required placeholder="Օրինակ՝ Լաբորատոր նյութեր"></label><label class="form-field">Ծնող խումբ<select v-model="categoryParent" class="form-control"><option value="">Առանց ծնող խմբի</option><option v-for="category in options.categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select></label><button class="primary-button" :disabled="categorySaving">{{ categorySaving ? 'Պահպանվում է…' : 'Ավելացնել խումբ' }}</button></form>
+        <div class="category-list"><div v-for="category in options.categories || []" :key="category.id" class="category-row"><div><strong>{{ category.name }}</strong><small v-if="category.parent_id">Ծնող՝ {{ categoryParentName(category) || '—' }}</small></div><button v-if="modulePermission('delete')" class="danger-button" @click="removeCategory(category)">Ջնջել</button></div><p v-if="!categoryBusy && !(options.categories || []).length" class="table-empty">Ապրանքային խմբեր դեռ չկան։</p></div>
+        <footer class="modal-actions"><button class="secondary-button" @click="categoriesOpen=false">Փակել</button></footer>
+    </section></div>
+
+    <div v-if="modal" class="modal-backdrop" @click.self="modal=false" @keydown.esc="modal=false"><form class="modal-card catalog-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՏՎՅԱԼՆԵՐԻ ՔԱՐՏ</p><h2>{{ selected ? 'Խմբագրել գրառումը' : (page === 'roles' ? 'Ստեղծել դեր' : 'Ավելացնել գրառում') }}</h2><p class="muted">Փոփոխությունները կգրանցվեն գործողությունների պատմությունում։</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" @click="modal=false"><AppIcon name="xmark" /></button></div>
         <div v-if="page === 'roles'" class="role-permission-list"><label class="form-field">Դերի անվանում *<input v-model.trim="form.title" class="form-control" maxlength="120" required :disabled="!!selected"></label><fieldset v-for="(items,moduleName) in permissionsByModule" :key="moduleName" class="permission-group"><legend>{{ moduleName }}</legend><label v-for="item in items" :key="item.code" class="toggle-label"><input v-model="form.permissions" type="checkbox" :value="item.code" :disabled="!!selected && !modulePermission('edit')">{{ item.title }}</label></fieldset></div>
         <div v-else class="form-grid"><label v-for="[key,label,type,required] in fields" :key="key" class="form-field" :class="{ 'span-2': ['address','barcode','storage_conditions'].includes(key) }">{{ label }}{{ required ? ' *' : '' }}
             <select v-if="['categories','suppliers','branches','roles'].includes(type)" v-model="form[key]" class="form-control" :required="!!required"><option value="">{{ key === 'category_id' || key === 'branch_id' ? 'Ընտրովի' : 'Ընտրել' }}</option><option v-for="item in selectOptions(type)" :key="item.id" :value="item.id">{{ item.name || item.title }}</option></select>
@@ -140,4 +254,4 @@ function cell(row, key) {
         </label></div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="modal=false">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Պահպանել' }}</button></div>
     </form></div>
-</template>
+<div v-if="traceOpen" class="modal-backdrop" @click.self="traceOpen=false" @keydown.esc="traceOpen=false"><section class="modal-card product-trace-modal"><header class="modal-header"><div><p class="eyebrow">ԱՊՐԱՆՔԻ ՀԵՏԱԳԻԾ</p><h2>{{ traceData?.product?.name || 'Բեռնում է…' }}</h2><p class="muted">{{ traceData?.product?.code || '' }} · LOT-եր, պահեստային շարժեր և մասնաճյուղերի պահանջներ։</p></div><button type="button" class="icon-button close-button" aria-label="Փակել" @click="traceOpen=false"><AppIcon name="xmark" /></button></header><p v-if="traceBusy" class="table-empty">Հետագիծը բեռնվում է…</p><p v-else-if="error" class="form-error" role="alert">{{ error }}</p><template v-else-if="traceData"><section class="trace-section"><h3>Ընթացիկ LOT մնացորդ <small>ընդհանուր՝ {{ traceData.lots.total }}</small></h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Պահեստ</th><th>LOT</th><th>Ժամկետ</th><th>Մնացորդ</th><th v-if="traceData.show_costs">Գին</th><th v-if="me?.permissions?.['suppliers.view']">Մատակարար</th><th>Տեղ</th></tr></thead><tbody><tr v-for="lot in traceData.lots.data" :key="lot.id"><td>{{ lot.location_name }}</td><td>{{ lot.lot_no }}</td><td>{{ lot.expires_on || '—' }}</td><td>{{ lot.qty }} {{ traceData.product.unit }}</td><td v-if="traceData.show_costs">{{ Number(lot.unit_cost).toLocaleString('hy-AM') }} ֏</td><td v-if="me?.permissions?.['suppliers.view']">{{ lot.supplier_name || '—' }}</td><td>{{ lot.bin_location || '—' }}</td></tr><tr v-if="!traceData.lots.data.length"><td :colspan="5 + Number(traceData.show_costs) + Number(!!me?.permissions?.['suppliers.view'])" class="table-empty">Ընթացիկ LOT չկա։</td></tr></tbody></table></div><div v-if="traceData.lots.last_page > 1" class="pagination"><span>{{ traceData.lots.from }}–{{ traceData.lots.to }} LOT՝ {{ traceData.lots.total }}-ից</span><div class="pagination-controls"><button :disabled="traceData.lots.current_page <= 1 || traceBusy" @click="changeTracePage('lots', traceData.lots.current_page - 1)">Նախորդ</button><span>Էջ {{ traceData.lots.current_page }} / {{ traceData.lots.last_page }}</span><button :disabled="traceData.lots.current_page >= traceData.lots.last_page || traceBusy" @click="changeTracePage('lots', traceData.lots.current_page + 1)">Հաջորդ</button></div></div></section><section class="trace-section"><h3>Շարժերի պատմություն <small>ընդհանուր՝ {{ traceData.movements.total }}</small></h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Ամսաթիվ</th><th>Փաստաթուղթ</th><th>Գործողություն</th><th>LOT</th><th>Ումից</th><th>Ուր</th><th>Քանակ</th><th>Կատարող</th><th>Պատճառ</th></tr></thead><tbody><tr v-for="move in traceData.movements.data" :key="move.id"><td>{{ move.happened_at }}</td><td>{{ move.reference || move.movement_no }}</td><td>{{ move.type }}</td><td>{{ move.lot_no || '—' }}</td><td>{{ move.from_name }}</td><td>{{ move.to_name }}</td><td>{{ move.qty }}</td><td>{{ move.actor_name || '—' }}</td><td>{{ move.reason || '—' }}</td></tr><tr v-if="!traceData.movements.data.length"><td colspan="9" class="table-empty">Շարժերի պատմություն չկա։</td></tr></tbody></table></div><div v-if="traceData.movements.last_page > 1" class="pagination"><span>{{ traceData.movements.from }}–{{ traceData.movements.to }} շարժ՝ {{ traceData.movements.total }}-ից</span><div class="pagination-controls"><button :disabled="traceData.movements.current_page <= 1 || traceBusy" @click="changeTracePage('movements', traceData.movements.current_page - 1)">Նախորդ</button><span>Էջ {{ traceData.movements.current_page }} / {{ traceData.movements.last_page }}</span><button :disabled="traceData.movements.current_page >= traceData.movements.last_page || traceBusy" @click="changeTracePage('movements', traceData.movements.current_page + 1)">Հաջորդ</button></div></div></section><section class="trace-section"><h3>Մասնաճյուղերի պահանջներ <small>ընդհանուր՝ {{ traceData.requests.total }}</small></h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Պահանջագիր</th><th>Ամսաթիվ</th><th>Մասնաճյուղ</th><th>Կարգավիճակ</th><th>Պահանջված</th><th>Հաստատված</th></tr></thead><tbody><tr v-for="request in traceData.requests.data" :key="`${request.request_no}-${request.created_at}`"><td>{{ request.request_no }}</td><td>{{ request.created_at }}</td><td>{{ request.branch_name }}</td><td>{{ request.status }}</td><td>{{ request.requested_qty }}</td><td>{{ request.approved_qty }}</td></tr><tr v-if="!traceData.requests.data.length"><td colspan="6" class="table-empty">Պահանջագրերի պատմություն չկա։</td></tr></tbody></table></div><div v-if="traceData.requests.last_page > 1" class="pagination"><span>{{ traceData.requests.from }}–{{ traceData.requests.to }} պահանջ՝ {{ traceData.requests.total }}-ից</span><div class="pagination-controls"><button :disabled="traceData.requests.current_page <= 1 || traceBusy" @click="changeTracePage('requests', traceData.requests.current_page - 1)">Նախորդ</button><span>Էջ {{ traceData.requests.current_page }} / {{ traceData.requests.last_page }}</span><button :disabled="traceData.requests.current_page >= traceData.requests.last_page || traceBusy" @click="changeTracePage('requests', traceData.requests.current_page + 1)">Հաջորդ</button></div></div></section></template><footer class="modal-actions"><button class="secondary-button" type="button" @click="traceOpen=false">Փակել</button></footer></section></div></template>

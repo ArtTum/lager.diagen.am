@@ -14,6 +14,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->redirectGuestsTo(static fn ($request): ?string => $request->is('api/*') ? null : route('login'),
+        );
         $middleware->alias([
             'active.user' => EnsureActiveUser::class,
             'permission' => RequirePermission::class,

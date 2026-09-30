@@ -7,7 +7,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (DB::getDriverName() !== 'mysql') throw new RuntimeException('Immutable audit triggers require MySQL/MariaDB.');
+        if (DB::getDriverName() !== 'mysql') {
+            throw new RuntimeException('Immutable audit triggers require MySQL/MariaDB.');
+        }
 
         $triggers = [
             'trg_audit_logs_block_update' => "CREATE TRIGGER trg_audit_logs_block_update BEFORE UPDATE ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Audit records cannot be changed'",
@@ -18,7 +20,9 @@ return new class extends Migration
 
         foreach ($triggers as $name => $sql) {
             $exists = DB::selectOne('SELECT COUNT(*) AS aggregate FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=?', [$name]);
-            if ((int) ($exists->aggregate ?? 0) === 0) DB::unprepared($sql);
+            if ((int) ($exists->aggregate ?? 0) === 0) {
+                DB::unprepared($sql);
+            }
         }
     }
 
