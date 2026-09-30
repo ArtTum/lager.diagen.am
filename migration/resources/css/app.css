@@ -512,3 +512,9 @@ input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.55;cursor:not-
   .list-filter-actions{width:100%}
   .list-filter-actions button{flex:1 1 0;min-width:0}
 }
+@media(max-width:760px){
+  .table-actions .icon-button{width:40px;height:40px;flex:0 0 40px}
+  .page-size-trigger{min-height:44px}
+  .remove-line{min-width:40px;min-height:40px}
+  .modal-header .close-button{width:40px;height:40px;flex:0 0 40px}
+}
