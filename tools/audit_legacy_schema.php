@@ -99,6 +99,7 @@ foreach (DB::select('SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, DATA_TYPE FROM
 $missingTables = array_values(array_diff($tables, array_keys($actualColumns)));
 $missingColumns = [];
 $typeMismatches = [];
+$normalizeDisplayWidth = static fn (string $type): string => preg_replace('/\b(bigint|int|tinyint)\(\d+\)/i', '$1', strtolower($type)) ?? strtolower($type);
 foreach ($expectedColumns as $table => $columns) {
     foreach ($columns as $column => $expectedType) {
         $actual = $actualColumns[$table][$column] ?? null;
@@ -110,7 +111,7 @@ foreach ($expectedColumns as $table => $columns) {
 
         // MariaDB implements its JSON alias using LONGTEXT.
         $matchesJsonAlias = $expectedType === 'json' && $actual['data_type'] === 'longtext';
-        if (! $matchesJsonAlias && $actual['type'] !== $expectedType) {
+        if (! $matchesJsonAlias && $normalizeDisplayWidth($actual['type']) !== $normalizeDisplayWidth($expectedType)) {
             $typeMismatches[] = [
                 'table' => $table,
                 'column' => $column,
