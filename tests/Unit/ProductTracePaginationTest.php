@@ -38,8 +38,8 @@ class ProductTracePaginationTest extends TestCase
                 'expires_on' => null, 'received_on' => '2026-09-01', 'qty' => 1, 'unit_cost' => 10, 'bin_location' => null,
             ]);
             DB::table('movements')->insert([
-                'id' => $id, 'product_id' => 1, 'from_location' => 0, 'to_location' => null, 'lot_id' => $id,
-                'movement_no' => 'MOVE-'.$id, 'type' => 'consumption', 'qty' => 1, 'reference' => null,
+                'id' => $id, 'product_id' => 1, 'from_location' => $id === 1 ? null : 0, 'to_location' => $id === 1 ? 0 : null, 'lot_id' => $id,
+                'movement_no' => 'MOVE-'.$id, 'type' => $id === 1 ? 'receipt' : 'consumption', 'qty' => 1, 'reference' => null,
                 'reason' => null, 'happened_at' => '2026-09-01 10:00:00', 'actor_id' => null,
             ]);
             DB::table('stock_requests')->insert([
@@ -67,6 +67,11 @@ class ProductTracePaginationTest extends TestCase
             self::assertCount(2, $trace[$list]->items());
         }
         self::assertArrayNotHasKey('unit_cost', $trace['lots']->items()[0]->toArray());
+        $movements = collect($trace['movements']->items())->keyBy('movement_no');
+        self::assertSame('Կենտրոնական պահեստ', $movements['MOVE-2']->from_name);
+        self::assertSame('Դուրս', $movements['MOVE-2']->to_name);
+        self::assertSame('Դրսից', $movements['MOVE-1']->from_name);
+        self::assertSame('Կենտրոնական պահեստ', $movements['MOVE-1']->to_name);
     }
 
     private function createSchema(): void

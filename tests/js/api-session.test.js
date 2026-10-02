@@ -79,3 +79,17 @@ test('a request without a bearer token cannot invalidate a later login', async (
     await assert.rejects(pending.request);
     assert.equal(localStorage.getItem('lagerAuthToken'), 'new-token');
 });
+
+test('an explicitly bound logout keeps its original authorization after the stored session changes', async () => {
+    localStorage.setItem('lagerAuthToken', 'new-token');
+    let authorization;
+    await api.post('auth/logout', null, {
+        headers: { Authorization: 'Bearer old-token' },
+        adapter(config) {
+            authorization = config.headers.get('Authorization');
+            return Promise.resolve({ status: 200, data: {}, headers: {}, config });
+        },
+    });
+    assert.equal(authorization, 'Bearer old-token');
+    assert.equal(localStorage.getItem('lagerAuthToken'), 'new-token');
+});

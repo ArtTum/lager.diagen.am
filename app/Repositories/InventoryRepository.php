@@ -78,10 +78,15 @@ class InventoryRepository
         return $session->fresh()->loadCount('lines');
     }
 
-    public function snapshotLots(int $location): Collection
+    public function snapshotLots(int $location, bool $lock = false): Collection
     {
-        return StockLot::query()->where('location_id', $location)->where('qty', '<>', 0)
-            ->orderBy('product_id')->orderBy('id')->get(['id', 'product_id', 'qty']);
+        $query = StockLot::query()->where('location_id', $location)->where('qty', '<>', 0)
+            ->orderBy('product_id')->orderBy('id');
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return $query->get(['id', 'product_id', 'qty']);
     }
 
     public function activeProductsWithoutStock(int $location): Collection

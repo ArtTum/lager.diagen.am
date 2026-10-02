@@ -100,6 +100,10 @@ class PermissionService
             $this->permissions->loadForRole($role);
             $grants = $role->permissions->pluck('code')->all();
         }
+        // Imported grants outside the current catalog have no effective access.
+        // Preserve them in storage without making otherwise assignable roles
+        // disappear from user forms or preventing routine account edits.
+        $grants = array_intersect($grants, PermissionCatalog::codes());
 
         return array_diff($grants, $assignable) === [];
     }

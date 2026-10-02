@@ -25,7 +25,7 @@ class StoreReceiptRequest extends FormRequest
             // PurchasingService aggregates their quantities before checking the
             // unreceived balance, so allowing repeated ids cannot bypass limits.
             'items.*.purchase_order_item_id' => ['required', 'integer', 'exists:purchase_order_items,id'],
-            'items.*.qty' => ['required', 'numeric', 'gt:0'],
+            'items.*.qty' => ['required', 'numeric', 'decimal:0,3', 'gt:0', 'max:999999999'],
             'items.*.lot_no' => ['required', 'string', 'max:100'],
             'items.*.expires_on' => ['nullable', 'date_format:Y-m-d'],
             'items.*.bin_location' => ['nullable', 'string', 'max:100'],

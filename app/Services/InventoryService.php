@@ -197,6 +197,14 @@ class InventoryService
                 throw ValidationException::withMessages(['session' => ['Գույքագրման տողերը չեն գտնվել։']]);
             }
 
+            $expectedLotIds = $lines->pluck('lot_id')->filter(fn ($id) => $id !== null)
+                ->map(fn ($id) => (int) $id)->sort()->values()->all();
+            $currentLotIds = $this->inventory->snapshotLots((int) $session->location_id, true)->pluck('id')
+                ->map(fn ($id) => (int) $id)->sort()->values()->all();
+            if ($expectedLotIds !== $currentLotIds) {
+                throw ValidationException::withMessages(['session' => ['Պահեստի LOT-երի մնացորդը գույքագրումից հետո փոխվել է։ Ստուգեք շարժերը և սկսեք նոր գույքագրում։']]);
+            }
+
             foreach ($lines as $line) {
                 if ($line->counted_qty === null || (float) $line->counted_qty < 0) {
                     throw ValidationException::withMessages(['session' => ['Բոլոր տողերը պետք է հաշվարկված լինեն։']]);

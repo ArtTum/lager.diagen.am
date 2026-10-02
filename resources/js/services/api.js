@@ -7,7 +7,9 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('lagerAuthToken');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
+    // Explicit authorization binds requests such as logout to the session that
+    // initiated them, even if another tab replaces the stored token meanwhile.
+    if (token && !config.headers.has('Authorization')) config.headers.Authorization = `Bearer ${token}`;
     return config;
 });
 

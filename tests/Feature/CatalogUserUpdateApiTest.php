@@ -72,7 +72,7 @@ class CatalogUserUpdateApiTest extends TestCase
         });
 
         $role = Role::query()->create(['name' => 'user_editor', 'title' => 'User editor']);
-        foreach (['users.edit', 'users.delete'] as $code) {
+        foreach (['users.create', 'users.edit', 'users.delete'] as $code) {
             $role->permissions()->attach(Permission::query()->create(['code' => $code, 'title' => $code, 'module' => 'users']));
         }
         $this->actor = User::query()->create([
@@ -150,6 +150,88 @@ class CatalogUserUpdateApiTest extends TestCase
     public static function deactivationMethods(): array
     {
         return [['update'], ['delete']];
+    }
+
+    public function test_hash_looking_password_reset_is_treated_as_the_literal_password(): void
+    {
+        $literalPassword = password_hash('hidden-secret', PASSWORD_BCRYPT, ['cost' => 10]);
+        $this->target->createToken('old-browser');
+
+        $this->putJson('/api/catalog/users/'.$this->target->id, $this->payload(['password' => $literalPassword]))
+            ->assertOk();
+
+        self::assertTrue(Hash::check($literalPassword, $this->target->fresh()->password));
+        self::assertFalse(Hash::check('hidden-secret', $this->target->fresh()->password));
+        self::assertSame(0, $this->target->tokens()->count());
+    }
+
+    public function test_new_user_hash_looking_password_is_treated_as_the_literal_password(): void
+    {
+        $literalPassword = password_hash('hidden-secret', PASSWORD_BCRYPT, ['cost' => 10]);
+        $this->postJson('/api/catalog/users', $this->payload([
+            'email' => 'new@example.test', 'password' => $literalPassword,
+        ]))->assertCreated();
+
+        $user = User::query()->where('email', 'new@example.test')->firstOrFail();
+        self::assertTrue(Hash::check($literalPassword, $user->password));
+        self::assertFalse(Hash::check('hidden-secret', $user->password));
+    }
+
+    public function test_account_edit_keeps_an_assignable_imported_role_with_obsolete_grants(): void
+    {
+        $legacy = Permission::query()->create([
+            'code' => 'legacy.retired_action', 'title' => 'Retired permission', 'module' => 'legacy',
+        ]);
+        $this->target->role->permissions()->attach($legacy);
+
+        $this->putJson('/api/catalog/users/'.$this->target->id, $this->payload([]))->assertOk();
+
+        self::assertTrue($this->target->role->permissions()->where('code', 'legacy.retired_action')->exists());
+    }
+
+    public static function maximumPasswordValues(): array
+    {
+        return ['ascii' => [str_repeat('x', 72)], 'multibyte' => [str_repeat('ա', 36)]];
+    }
+
+    #[DataProvider('maximumPasswordValues')]
+    public function test_password_reset_accepts_the_full_bcrypt_byte_limit(string $password): void
+    {
+        $this->putJson('/api/catalog/users/'.$this->target->id, $this->payload(['password' => $password]))
+            ->assertOk();
+
+        self::assertTrue(Hash::check($password, $this->target->fresh()->password));
+    }
+
+    public static function invalidPasswordValues(): array
+    {
+        return [
+            'bcrypt truncation' => [str_repeat('x', 73)],
+            'multibyte truncation' => [str_repeat('ա', 37)],
+            'null byte' => ["valid-password\0suffix"],
+        ];
+    }
+
+    #[DataProvider('invalidPasswordValues')]
+    public function test_password_reset_rejects_values_bcrypt_cannot_preserve(string $password): void
+    {
+        $hash = $this->target->password;
+        $this->target->createToken('existing-browser');
+        $this->putJson('/api/catalog/users/'.$this->target->id, $this->payload(['password' => $password]))
+            ->assertUnprocessable()->assertJsonValidationErrors('password');
+
+        self::assertSame($hash, $this->target->fresh()->password);
+        self::assertSame(1, $this->target->tokens()->count());
+    }
+
+    #[DataProvider('invalidPasswordValues')]
+    public function test_user_creation_rejects_values_bcrypt_cannot_preserve(string $password): void
+    {
+        $this->postJson('/api/catalog/users', $this->payload([
+            'email' => 'new@example.test', 'password' => $password,
+        ]))->assertUnprocessable()->assertJsonValidationErrors('password');
+
+        $this->assertDatabaseMissing('users', ['email' => 'new@example.test']);
     }
 
     private function payload(array $changes): array

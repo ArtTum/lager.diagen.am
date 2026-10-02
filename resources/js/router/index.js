@@ -48,24 +48,31 @@ const routes = [
 const router = createRouter({ history: createWebHistory(), routes });
 let user = null;
 let userLoaded = false;
+let userToken = null;
 let contextRequestVersion = 0;
 
 export function currentUser() { return user; }
 export function setCurrentUser(value) {
+    contextRequestVersion += 1;
     user = value;
-    userLoaded = true;
+    userLoaded = Boolean(value);
+    userToken = value ? localStorage.getItem('lagerAuthToken') : null;
     window.dispatchEvent(new CustomEvent('lager:user', { detail: value }));
 }
 
 export async function refreshCurrentUser() {
     const token = localStorage.getItem('lagerAuthToken');
-    if (!token) return null;
+    if (!token) {
+        setCurrentUser(null);
+        return null;
+    }
     const requestVersion = ++contextRequestVersion;
     const response = await api.get('auth/me');
     if (localStorage.getItem('lagerAuthToken') !== token || requestVersion !== contextRequestVersion) return currentUser();
     const freshUser = response.data.data;
     if (userContextChanged(user, freshUser)) setCurrentUser(freshUser);
     userLoaded = true;
+    userToken = token;
 
     return freshUser;
 }
@@ -75,20 +82,31 @@ window.addEventListener('lager:unauthorized', () => {
     if (router.currentRoute.value.path !== '/login') router.replace('/login');
 });
 
+window.addEventListener('storage', (event) => {
+    if (event.key !== 'lagerAuthToken' && event.key !== null) return;
+    setCurrentUser(null);
+    if (localStorage.getItem('lagerAuthToken')) window.location.reload();
+    else if (router.currentRoute.value.path !== '/login') router.replace('/login');
+});
+
 router.beforeEach(async (to) => {
     const token = localStorage.getItem('lagerAuthToken');
     if (!token) {
         setCurrentUser(null);
         return to.meta.guest ? true : '/login';
     }
+    if (userToken !== token) setCurrentUser(null);
     if (!userLoaded) {
         try {
             await refreshCurrentUser();
-        } catch {
-            localStorage.removeItem('lagerAuthToken');
-            setCurrentUser(null);
+        } catch (error) {
+            // Network/server failures are retryable. Only invalidate the token
+            // checked by this request, never a login completed while it waited.
+            if (error.response?.status === 401 && localStorage.getItem('lagerAuthToken') === token) {
+                localStorage.removeItem('lagerAuthToken');
+                setCurrentUser(null);
+            }
         }
-        userLoaded = true;
     }
     if (!user) return to.meta.guest ? true : '/login';
     if (to.meta.guest) return firstAvailablePath(routes, user.permissions);

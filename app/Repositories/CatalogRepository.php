@@ -44,6 +44,15 @@ class CatalogRepository
 
     public function create(string $kind, array $data): Model
     {
+        if ($kind === 'users') {
+            $password = $data['password'];
+            unset($data['password']);
+            $record = $this->queryFor($kind)->make($data);
+            $record->setPlainPassword($password)->save();
+
+            return $record->refresh();
+        }
+
         return $this->queryFor($kind)->create($data)->refresh();
     }
 
@@ -52,6 +61,10 @@ class CatalogRepository
         // An empty optional password means "keep the current password". The
         // HTTP middleware converts the edit form's empty string to null.
         if ($record instanceof User && ($data['password'] ?? '') === '') {
+            unset($data['password']);
+        }
+        if ($record instanceof User && isset($data['password'])) {
+            $record->setPlainPassword($data['password']);
             unset($data['password']);
         }
         $record->fill($data)->save();

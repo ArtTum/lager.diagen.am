@@ -22,12 +22,15 @@ class CatalogServicePermissionOptionsTest extends TestCase
 
         $allowed = new Role(['name' => 'branch_staff', 'title' => 'Branch staff']);
         $allowed->setAttribute('id', 1);
-        $allowed->setRelation('permissions', collect([new Permission(['code' => 'users.view'])]));
+        $allowed->setRelation('permissions', collect([
+            new Permission(['code' => 'users.view']),
+            new Permission(['code' => 'legacy.retired_action']),
+        ]));
         $forbidden = new Role(['name' => 'branch_admin', 'title' => 'Branch admin']);
         $forbidden->setAttribute('id', 2);
         $forbidden->setRelation('permissions', collect([
             new Permission(['code' => 'users.view']),
-            new Permission(['code' => 'stock.adjust']),
+            new Permission(['code' => 'stock.edit']),
         ]));
 
         $catalog = $this->createMock(CatalogRepository::class);

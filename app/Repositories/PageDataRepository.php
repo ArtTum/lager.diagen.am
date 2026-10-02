@@ -59,7 +59,7 @@ class PageDataRepository
                     ->when(is_numeric($filters['threshold'] ?? null), fn ($query) => $query->whereDate('stock_lots.expires_on', '>=', now()->toDateString())->whereDate('stock_lots.expires_on', '<=', now()->addDays((int) $filters['threshold'])->toDateString()))
                     ->select('stock_lots.id', 'p.code', 'p.name as product', 'stock_lots.lot_no', 'stock_lots.expires_on', 's.name as supplier', 'stock_lots.qty', 'p.unit')
                     ->selectRaw("CASE WHEN stock_lots.location_id = 0 THEN 'Կենտրոնական պահեստ' ELSE COALESCE(b.name, 'Անհայտ պահեստ') END as location")
-                    ->selectRaw('DATEDIFF(stock_lots.expires_on, CURRENT_DATE) as days_left')->orderBy('stock_lots.expires_on'), ['p.code', 'p.name', 'stock_lots.lot_no', 'b.name', 's.name']],
+                    ->selectRaw('DATEDIFF(stock_lots.expires_on, ?) as days_left', [now()->toDateString()])->orderBy('stock_lots.expires_on'), ['p.code', 'p.name', 'stock_lots.lot_no', 'b.name', 's.name']],
             'purchases' => [['order_no' => 'Պատվեր', 'supplier' => 'Մատակարար', 'status' => 'Կարգավիճակ', 'ordered_on' => 'Պատվերի օր', 'expected_on' => 'Սպասվող օր', 'created_at' => 'Ստեղծվել է'],
                 PurchaseOrder::query()->join('suppliers as s', 's.id', '=', 'purchase_orders.supplier_id')->select('purchase_orders.id', 'purchase_orders.order_no', 's.name as supplier', 'purchase_orders.status', 'purchase_orders.ordered_on', 'purchase_orders.expected_on', 'purchase_orders.created_at')->orderByDesc('purchase_orders.id'), ['purchase_orders.order_no', 's.name', 'purchase_orders.status']],
             'receipts' => [['receipt_no' => 'Մուտք', 'supplier' => 'Մատակարար', 'invoice_no' => 'Հաշիվ', 'received_on' => 'Ստացման օր', 'note' => 'Նշում'],

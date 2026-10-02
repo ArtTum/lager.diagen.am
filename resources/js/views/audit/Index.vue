@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import ListFilterBar from '@/components/ListFilterBar.vue';
@@ -14,6 +14,7 @@ const search = ref('');
 const expanded = ref(null);
 const filters = reactive({ from: '', to: '' });
 let timer;
+let listRequestVersion = 0;
 const rows = computed(() => result.value?.data || []);
 
 const entityLabels = {
@@ -53,15 +54,16 @@ const moduleLabels = {
 const permissionActionLabels = { approve: 'Հաստատել', create: 'Ստեղծել', delete: 'Ջնջել', edit: 'Փոփոխել', export: 'Արտահանել', view: 'Դիտել' };
 
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
+  const version = ++listRequestVersion;
   busy.value = true;
   error.value = '';
   try {
     const response = await api.get('pages/audit', { params: { ...filters, page, per_page: pageSize, search: search.value || undefined } });
-    result.value = response.data;
+    if (version === listRequestVersion) result.value = response.data;
   } catch (exception) {
-    error.value = exception.response?.data?.message || 'Գործողությունների պատմությունը չհաջողվեց բեռնել։';
+    if (version === listRequestVersion) error.value = exception.response?.data?.message || 'Գործողությունների պատմությունը չհաջողվեց բեռնել։';
   } finally {
-    busy.value = false;
+    if (version === listRequestVersion) busy.value = false;
   }
 }
 
@@ -151,6 +153,7 @@ watch(search, () => {
   timer = setTimeout(() => load(1), 250);
 });
 onMounted(() => load());
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(timer); });
 </script>
 
 <template>

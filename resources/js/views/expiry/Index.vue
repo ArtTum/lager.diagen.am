@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import ExportActions from '@/components/ExportActions.vue';
@@ -8,9 +8,11 @@ import { formatDisplayDate } from '@/dateUtils';
 
 const route=useRoute();const result=ref(null);const busy=ref(false);const error=ref('');const search=ref('');
 const filters=reactive({threshold:''});const rows=computed(()=>result.value?.data||[]);
-async function load(page=1,pageSize=result.value?.pagination.per_page||15){busy.value=true;error.value='';try{const response=await api.get('pages/expiry',{params:{...filters,search:search.value||undefined,page,per_page:pageSize}});result.value=response.data;}catch(e){error.value=e.response?.data?.message||'Ժամկետների ցանկը չհաջողվեց բեռնել։';}finally{busy.value=false;}}
+let listRequestVersion=0;
+async function load(page=1,pageSize=result.value?.pagination.per_page||15){const version=++listRequestVersion;busy.value=true;error.value='';try{const response=await api.get('pages/expiry',{params:{...filters,search:search.value||undefined,page,per_page:pageSize}});if(version===listRequestVersion)result.value=response.data;}catch(e){if(version===listRequestVersion)error.value=e.response?.data?.message||'Ժամկետների ցանկը չհաջողվեց բեռնել։';}finally{if(version===listRequestVersion)busy.value=false;}}
 function clear(){filters.threshold='';search.value='';load(1);}
 onMounted(()=>load());
+onBeforeUnmount(()=>{listRequestVersion+=1;});
 const status=(days)=>Number(days)<0?{title:`Անցել է ${Math.abs(Number(days))} օր`,tone:'expired'}:Number(days)<=30?{title:`Մնացել է ${days} օր`,tone:'soon'}:{title:`Մնացել է ${days} օր`,tone:'safe'};
 </script>
 

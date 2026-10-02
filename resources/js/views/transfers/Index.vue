@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
@@ -21,6 +21,7 @@ const confirmAction = ref(null);
 const filters = reactive({ status: '', from_branch: '', to_branch: '', from: '', to: '' });
 const form = reactive({ from_branch: '', to_branch: '', reason: '', items: [{ product_id: '', qty: '' }] });
 let debounce;
+let listRequestVersion = 0;
 const isAdmin = computed(() => user.value?.role?.name === 'admin');
 const isCentral = computed(() => user.value?.location_id === 0);
 const canCreate = computed(() => Boolean(user.value?.permissions?.['transfers.create']));
@@ -34,14 +35,17 @@ const filterSelects = computed(() => [
 ]);
 
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
+    const version = ++listRequestVersion;
     busy.value = true; error.value = '';
-    try { const response = await api.get('pages/transfers', { params: { ...filters, page, per_page: pageSize, search: search.value || undefined } }); result.value = response.data; }
-    catch (e) { error.value = e.response?.data?.message || 'Տեղափոխումների ցանկը չհաջողվեց բեռնել։'; }
-    finally { busy.value = false; }
+    try { const response = await api.get('pages/transfers', { params: { ...filters, page, per_page: pageSize, search: search.value || undefined } }); if (version === listRequestVersion) result.value = response.data; }
+    catch (e) { if (version === listRequestVersion) error.value = e.response?.data?.message || 'Տեղափոխումների ցանկը չհաջողվեց բեռնել։'; }
+    finally { if (version === listRequestVersion) busy.value = false; }
 }
 function resetFilters() { Object.assign(filters, { status: '', from_branch: '', to_branch: '', from: '', to: '' }); load(1); }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-onMounted(() => { load(); window.addEventListener('lager:user', (event) => { user.value = event.detail; }); });
+const updateUser = (event) => { user.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 
 async function openCreate() {
     error.value = '';

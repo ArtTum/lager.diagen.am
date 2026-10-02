@@ -113,7 +113,9 @@ class StockRequestRepository
                     ->where(fn (Builder $query) => $query->whereNull('expires_on')->orWhere('expires_on', '>=', $today)),
                 'consumed_qty' => Movement::query()->selectRaw('COALESCE(SUM(qty), 0)')
                     ->whereColumn('movements.product_id', 'products.id')
-                    ->where('type', 'consumption')->where('reason', 'Ներքին օգտագործում')
+                    ->where('type', 'consumption')->whereIn('reason', ['usage', 'Ներքին օգտագործում'])
+                    ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('movement_corrections')
+                        ->whereColumn('movement_corrections.movement_id', 'movements.id'))
                     ->where('from_location', $branchId)->where('happened_at', '>=', $since),
             ])->get();
 

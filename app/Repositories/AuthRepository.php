@@ -11,6 +11,11 @@ class AuthRepository
         return User::query()->with(['role.permissions', 'branch'])->where('email', $email)->first();
     }
 
+    public function findByEmailForUpdate(string $email): ?User
+    {
+        return User::query()->with(['role.permissions', 'branch'])->where('email', $email)->lockForUpdate()->first();
+    }
+
     public function loadAuthContext(User $user): User
     {
         return $user->loadMissing(['role.permissions', 'branch']);

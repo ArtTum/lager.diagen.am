@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\AuthRepository;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -17,15 +18,24 @@ class AuthService
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             throw ValidationException::withMessages(['email' => ['Էլ. փոստը կամ գաղտնաբառը սխալ է։']]);
         }
-        abort_unless($user->active, 403, 'Օգտահաշիվն ապաակտիվացված է։ Դիմեք համակարգի ադմինիստրատորին։');
+        $verifiedHash = $user->password;
 
-        // Upgrade legacy PHP PASSWORD_DEFAULT hashes to the current Laravel cost
-        // after successful authentication; never change hashes on a failed login.
-        if (Hash::needsRehash($user->password)) {
-            $user->forceFill(['password' => $credentials['password']])->saveQuietly();
-        }
+        return DB::transaction(function () use ($credentials, $verifiedHash): array {
+            // Serialize token issuance with password resets and deactivation.
+            // Verify again when credentials changed after the initial hash check.
+            $user = $this->users->findByEmailForUpdate($credentials['email']);
+            if (! $user || ($user->password !== $verifiedHash && ! Hash::check($credentials['password'], $user->password))) {
+                throw ValidationException::withMessages(['email' => ['Էլ. փոստը կամ գաղտնաբառը սխալ է։']]);
+            }
+            abort_unless($user->active, 403, 'Օգտահաշիվն ապաակտիվացված է։ Դիմեք համակարգի ադմինիստրատորին։');
 
-        return ['token' => $user->createToken('diagen-lager-vue')->plainTextToken, 'user' => $this->payload($user)];
+            // Upgrade legacy hashes only while holding the current user row.
+            if (Hash::needsRehash($user->password)) {
+                $user->setPlainPassword($credentials['password'])->saveQuietly();
+            }
+
+            return ['token' => $user->createToken('diagen-lager-vue')->plainTextToken, 'user' => $this->payload($user)];
+        });
     }
 
     public function me(User $user): array

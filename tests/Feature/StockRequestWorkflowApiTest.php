@@ -29,7 +29,7 @@ class StockRequestWorkflowApiTest extends TestCase
     protected function tearDown(): void
     {
         foreach ([
-            'audit_logs', 'movements', 'transfer_items', 'transfers', 'request_items',
+            'audit_logs', 'movement_corrections', 'movements', 'transfer_items', 'transfers', 'request_items',
             'stock_requests', 'stock_lots', 'products', 'role_permissions', 'permissions',
             'roles', 'branches', 'users',
         ] as $table) {
@@ -179,6 +179,38 @@ class StockRequestWorkflowApiTest extends TestCase
             ->assertJsonPath('data.items.'.$product->id.'.average', 3);
     }
 
+    public function test_request_suggestions_include_usage_recorded_through_the_stock_api(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'API-SUG-USAGE', 'name' => 'Consumed supply', 'unit' => 'լիտր', 'purchase_price' => 100,
+            'optimal_qty' => 20, 'lot_control' => true, 'expiry_control' => true, 'active' => true,
+        ]);
+        StockLot::query()->create([
+            'product_id' => $product->id, 'location_id' => $branch->id, 'lot_no' => 'USAGE-LOT',
+            'expires_on' => now()->addMonths(6)->toDateString(), 'received_on' => now()->toDateString(),
+            'unit_cost' => 100, 'qty' => 10,
+        ]);
+        $actor = $this->user($branch, 'branch', 10, ['stock.create', 'requests.create', 'movements.edit']);
+
+        $this->actingAs($actor, 'sanctum')->postJson('/api/stock/consume', [
+            'product_id' => $product->id, 'qty' => 3, 'issue_type' => 'usage',
+        ])->assertOk();
+
+        $this->getJson('/api/requests/suggestions?branch_id='.$branch->id)->assertOk()
+            ->assertJsonPath('data.items.'.$product->id.'.current', 7)
+            ->assertJsonPath('data.items.'.$product->id.'.suggested', 13)
+            ->assertJsonPath('data.items.'.$product->id.'.average', 1);
+
+        $movement = Movement::query()->sole();
+        $this->postJson("/api/movements/{$movement->id}/reverse", ['reason' => 'Սխալ դուրսգրման ամբողջական հակադարձում'])->assertOk();
+
+        $this->getJson('/api/requests/suggestions?branch_id='.$branch->id)->assertOk()
+            ->assertJsonPath('data.items.'.$product->id.'.current', 10)
+            ->assertJsonPath('data.items.'.$product->id.'.suggested', 10)
+            ->assertJsonPath('data.items.'.$product->id.'.average', 0);
+    }
+
     public function test_approval_reserves_free_central_stock_across_other_open_requests(): void
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
@@ -228,6 +260,57 @@ class StockRequestWorkflowApiTest extends TestCase
         self::assertSame('sent', StockRequest::query()->findOrFail($secondId)->status);
         self::assertEquals(0.0, (float) StockRequestItem::query()->findOrFail($secondItemId)->approved_qty);
         self::assertEquals(5.0, (float) StockLot::query()->where('location_id', 0)->value('qty'));
+    }
+
+    public function test_request_shipment_preserves_other_reservations_when_stock_expires_and_rolls_back_all_lines(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $attributes = ['unit' => 'հատ', 'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => true, 'active' => true];
+        $firstProduct = Product::query()->create([...$attributes, 'code' => 'SHIP-FIRST', 'name' => 'First line']);
+        $reservedProduct = Product::query()->create([...$attributes, 'code' => 'SHIP-RESERVED', 'name' => 'Reserved line']);
+        $lotAttributes = ['location_id' => 0, 'received_on' => now()->toDateString(), 'unit_cost' => 100];
+        $firstLot = StockLot::query()->create([...$lotAttributes, 'product_id' => $firstProduct->id, 'lot_no' => 'FIRST', 'qty' => 2, 'expires_on' => now()->addMonth()->toDateString()]);
+        $availableLot = StockLot::query()->create([...$lotAttributes, 'product_id' => $reservedProduct->id, 'lot_no' => 'AVAILABLE', 'qty' => 3, 'expires_on' => now()->addMonth()->toDateString()]);
+        $expiringLot = StockLot::query()->create([...$lotAttributes, 'product_id' => $reservedProduct->id, 'lot_no' => 'EXPIRING', 'qty' => 2, 'expires_on' => now()->toDateString()]);
+        $branchActor = $this->user($branch, 'branch', 10, ['requests.create']);
+        $centralActor = $this->user($central, 'admin', 20, ['requests.approve', 'requests.edit']);
+
+        $this->actingAs($branchActor, 'sanctum');
+        $requestId = (int) $this->postJson('/api/requests', [
+            'branch_id' => $branch->id, 'urgency' => 'normal', 'submit_mode' => 'send',
+            'items' => [['product_id' => $firstProduct->id, 'qty' => 1], ['product_id' => $reservedProduct->id, 'qty' => 3]],
+        ])->assertCreated()->json('data.id');
+        $otherId = (int) $this->postJson('/api/requests', [
+            'branch_id' => $branch->id, 'urgency' => 'normal', 'submit_mode' => 'send',
+            'items' => [['product_id' => $reservedProduct->id, 'qty' => 2]],
+        ])->assertCreated()->json('data.id');
+        $this->actingAs($centralActor, 'sanctum');
+        foreach ([$requestId, $otherId] as $id) {
+            $approved = StockRequestItem::query()->where('request_id', $id)->pluck('requested_qty', 'id')->all();
+            $this->postJson("/api/requests/{$id}/review", ['decision' => 'approve', 'approved' => $approved])->assertOk();
+        }
+        $this->postJson("/api/requests/{$requestId}/collect")->assertOk();
+        $this->postJson("/api/requests/{$requestId}/ready")->assertOk();
+        $this->travel(1)->days();
+
+        $this->postJson("/api/requests/{$requestId}/ship")->assertUnprocessable()->assertJsonValidationErrors('items');
+
+        self::assertSame('ready_to_ship', StockRequest::query()->findOrFail($requestId)->status);
+        self::assertSame('approved', StockRequest::query()->findOrFail($otherId)->status);
+        self::assertSame('2.000', $firstLot->fresh()->qty, 'A later failing line must roll back earlier deductions.');
+        self::assertSame('3.000', $availableLot->fresh()->qty);
+        self::assertSame('2.000', $expiringLot->fresh()->qty);
+        self::assertSame(0, Movement::query()->count());
+
+        $replacement = StockLot::query()->create([...$lotAttributes, 'product_id' => $reservedProduct->id, 'lot_no' => 'REPLACEMENT', 'qty' => 2, 'expires_on' => now()->addMonths(2)->toDateString()]);
+        $this->postJson("/api/requests/{$requestId}/ship")->assertOk();
+
+        self::assertSame('shipped', StockRequest::query()->findOrFail($requestId)->status);
+        self::assertSame('1.000', $firstLot->fresh()->qty);
+        self::assertSame('0.000', $availableLot->fresh()->qty);
+        self::assertSame('2.000', $replacement->fresh()->qty, 'The other request must retain its reserved quantity.');
+        self::assertSame(2, Movement::query()->count());
     }
 
     public function test_request_suggestions_require_the_create_permission(): void
@@ -469,12 +552,20 @@ class StockRequestWorkflowApiTest extends TestCase
             $table->dateTime('happened_at');
             $table->dateTime('created_at')->nullable();
         });
+        Schema::create('movement_corrections', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('movement_id')->unique();
+            $table->string('correction_no')->unique();
+            $table->text('reason');
+            $table->unsignedBigInteger('actor_id');
+            $table->timestamp('created_at');
+        });
         Schema::create('audit_logs', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('actor_id');
             $table->string('action');
             $table->string('entity');
-            $table->unsignedBigInteger('entity_id');
+            $table->unsignedBigInteger('entity_id')->nullable();
             $table->json('before_data')->nullable();
             $table->json('after_data')->nullable();
             $table->string('ip_address')->nullable();

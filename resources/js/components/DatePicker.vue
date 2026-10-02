@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from './AppIcon.vue';
 import { displayIsoDate, parseDisplayDate, parseIsoDate, toIsoDate } from '../dateUtils';
 
@@ -45,6 +45,11 @@ function isAllowed(date) {
   return (!props.min || iso >= props.min) && (!props.max || iso <= props.max);
 }
 function showDateError(message) { input.value?.setCustomValidity(message); }
+function validateTypedValue() {
+  const value = typedValue.value;
+  const date = parseDisplayDate(value);
+  showDateError(!value ? '' : !date ? 'Ամսաթիվը մուտքագրեք ՕՕ.ԱԱ.ՏՏՏՏ ձևաչափով։' : valueOfBoundary(toIsoDate(date)));
+}
 function onInput(event) {
   const value = event.target.value;
   const date = parseDisplayDate(value);
@@ -123,8 +128,10 @@ function keydown(event) {
 watch(() => props.modelValue, (value) => {
   typedValue.value = displayIsoDate(value);
   if (isOpen.value && parseIsoDate(value)) month.value = monthStart(parseIsoDate(value));
-  showDateError('');
+  validateTypedValue();
 });
+watch(() => [props.min, props.max], validateTypedValue);
+onMounted(validateTypedValue);
 onBeforeUnmount(close);
 </script>
 

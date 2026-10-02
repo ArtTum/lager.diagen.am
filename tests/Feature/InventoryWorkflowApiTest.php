@@ -154,6 +154,27 @@ class InventoryWorkflowApiTest extends TestCase
         self::assertSame(0, Movement::query()->count());
     }
 
+    public function test_inventory_approval_rejects_new_stock_lots_received_after_the_snapshot(): void
+    {
+        [$sessionId, $line, $lot, $approver] = $this->prepareInventory(now()->addMonths(6)->toDateString(), 5);
+        $this->putJson("/api/inventory/{$sessionId}/count", [
+            'counts' => [$line->id => ['counted_qty' => 4, 'reason' => 'One item is missing']],
+        ])->assertOk();
+        $newLot = StockLot::query()->create([
+            'product_id' => $lot->product_id, 'location_id' => 0, 'lot_no' => 'ARRIVED-AFTER-COUNT',
+            'expires_on' => now()->addMonths(6)->toDateString(), 'received_on' => now()->toDateString(),
+            'unit_cost' => 10, 'qty' => 2,
+        ]);
+
+        $this->actingAs($approver, 'sanctum')->postJson("/api/inventory/{$sessionId}/approve")
+            ->assertUnprocessable()->assertJsonValidationErrors('session');
+
+        self::assertSame('counted', InventorySession::query()->findOrFail($sessionId)->status);
+        self::assertSame('5.000', $lot->fresh()->qty);
+        self::assertSame('2.000', $newLot->fresh()->qty);
+        self::assertSame(0, Movement::query()->count());
+    }
+
     private function prepareInventory(?string $expiry, float $quantity): array
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);

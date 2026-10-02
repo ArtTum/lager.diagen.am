@@ -76,6 +76,31 @@ class StockConsumptionApiTest extends TestCase
         self::assertSame(2, Movement::query()->count());
     }
 
+    public function test_consumption_rejects_unrepresentable_quantity_and_preserves_stock(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'USE-PRECISION', 'name' => 'Fractional stock', 'unit' => 'լիտր',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => true, 'active' => true,
+        ]);
+        $lot = $this->lot($product, (int) $branch->id, 'PRECISION', 1, now()->addMonth()->toDateString());
+        $this->actingAs($this->branchUser($branch, 10), 'sanctum');
+
+        $this->postJson('/api/stock/consume', [
+            'product_id' => $product->id, 'qty' => '0.000001', 'issue_type' => 'usage',
+        ])->assertUnprocessable()->assertJsonValidationErrors('qty');
+
+        self::assertSame('1.000', $lot->fresh()->qty);
+        self::assertSame(0, Movement::query()->count());
+
+        $this->postJson('/api/stock/consume', [
+            'product_id' => $product->id, 'qty' => '0.001', 'issue_type' => 'usage',
+        ])->assertOk();
+
+        self::assertSame('0.999', $lot->fresh()->qty);
+        self::assertSame('0.001', Movement::query()->sole()->qty);
+    }
+
     public function test_stock_adjustment_rejects_increasing_an_expired_lot_but_allows_reducing_it(): void
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);

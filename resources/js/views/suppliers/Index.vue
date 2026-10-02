@@ -1,7 +1,7 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import api from '@/services/api';
 import { currentUser } from '@/router';
 import { formatDisplayDateOnly as formatDisplayDate } from '@/dateUtils';
@@ -24,28 +24,34 @@ const confirmSupplier = ref(null);
 const confirmError = ref('');
 const saving = ref(false);
 const user = ref(currentUser());
+const can = (permission) => Boolean(user.value?.permissions?.[permission]);
 const canViewFinancial = computed(() => Boolean(user.value?.permissions?.['purchases.view']));
 const blank = () => ({ name: '', tax_id: '', address: '', contact_name: '', phone: '', email: '', bank_details: '', contract_no: '', contract_start: '', contract_end: '', payment_terms: '', delivery_days: '', active: true });
 const form = reactive(blank());
 let debounce;
+let listRequestVersion = 0;
 
 const suppliers = computed(() => page.value?.data || []);
-const missingCount = (supplier) => ['tax_id', 'address', 'contact_name', 'phone', 'email', ...(canViewFinancial.value ? ['bank_details'] : []), 'contract_no', 'contract_start', 'contract_end', 'payment_terms', 'delivery_days'].filter((key) => !supplier[key]).length;
+const missingCount = (supplier) => ['tax_id', 'address', 'contact_name', 'phone', 'email', ...(canViewFinancial.value ? ['bank_details'] : []), 'contract_no', 'contract_start', 'contract_end', 'payment_terms', 'delivery_days'].filter((key) => supplier[key] === null || supplier[key] === undefined || String(supplier[key]).trim() === '').length;
 
 async function load(pageNumber = 1, pageSize = page.value?.per_page || 15) {
+    const version = ++listRequestVersion;
     busy.value = true;
     error.value = '';
     try {
         const response = await api.get('suppliers', { params: { page: pageNumber, per_page: pageSize, search: search.value || undefined, active_only: showInactive.value ? undefined : 1 } });
-        page.value = response.data;
-    } catch (e) { error.value = e.response?.data?.message || 'Մատակարարների ցանկը չհաջողվեց բեռնել։'; }
-    finally { busy.value = false; }
+        if (version === listRequestVersion) page.value = response.data;
+    } catch (e) { if (version === listRequestVersion) error.value = e.response?.data?.message || 'Մատակարարների ցանկը չհաջողվեց բեռնել։'; }
+    finally { if (version === listRequestVersion) busy.value = false; }
 }
 
 watch([search, showInactive], () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-onMounted(() => { load(); window.addEventListener('lager:user', (event) => { user.value = event.detail; }); });
+const updateUser = (event) => { user.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 
 function openCreate() {
+    if (!can('suppliers.create')) return;
     selectedId.value = null;
     Object.assign(form, blank());
     error.value = '';
@@ -53,6 +59,7 @@ function openCreate() {
 }
 
 async function openEdit(supplier) {
+    if (!can('suppliers.edit')) return;
     error.value = '';
     try {
         const response = await api.get(`suppliers/${supplier.id}`);
@@ -91,7 +98,7 @@ function changeHistoryPage(list, pageNumber) {
 }
 
 async function save() {
-    if (saving.value) return;
+    if (saving.value || !can(selectedId.value ? 'suppliers.edit' : 'suppliers.create')) return;
     saving.value = true;
     error.value = '';
     try {
@@ -108,12 +115,13 @@ async function save() {
 }
 
 async function deactivate(supplier) {
+    if (!can('suppliers.delete')) return;
     confirmSupplier.value = supplier;
     confirmError.value = '';
 }
 
 async function confirmDeactivate() {
-    if (!confirmSupplier.value || saving.value) return;
+    if (!confirmSupplier.value || saving.value || !can('suppliers.delete')) return;
     saving.value = true;
     confirmError.value = '';
     try {
@@ -128,12 +136,12 @@ async function confirmDeactivate() {
 </script>
 
 <template>
-    <div class="page-heading"><div><p class="eyebrow">ԳՆՈՒՄՆԵՐ ԵՎ ԳՈՐԾՈՂՈՒԹՅՈՒՆՆԵՐ</p><h1>Մատակարարներ</h1><p class="muted">Կառավարեք մատակարարների քարտերը, պայմանագրերն ու կապակցված գնումները։</p></div><button class="primary-button" @click="openCreate"><span><AppIcon name="add" /></span>Ավելացնել մատակարար</button></div>
+    <div class="page-heading"><div><p class="eyebrow">ԳՆՈՒՄՆԵՐ ԵՎ ԳՈՐԾՈՂՈՒԹՅՈՒՆՆԵՐ</p><h1>Մատակարարներ</h1><p class="muted">Կառավարեք մատակարարների քարտերը, պայմանագրերն ու կապակցված գնումները։</p></div><button v-if="can('suppliers.create')" class="primary-button" @click="openCreate"><span><AppIcon name="add" /></span>Ավելացնել մատակարար</button></div>
     <div v-if="error && !modalOpen" class="alert-error" role="alert">{{ error }}</div><div v-if="notice" class="notice-success" role="status">{{ notice }}</div>
     <section class="table-card">
         <div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Փնտրել անունով, ՀՎՀՀ-ով կամ կոնտակտով…"></label><label class="toggle-label"><input v-model="showInactive" type="checkbox"> Ցույց տալ ապաակտիվացվածները</label><div class="list-count">Ընդամենը՝ <b>{{ page?.total ?? '…' }}</b></div></div>
         <div class="table-scroll"><table class="data-table"><thead><tr><th>Մատակարար</th><th>Կոնտակտ</th><th>ՀՎՀՀ</th><th>Պայմանագիր</th><th>Առաքում</th><th>Քարտի տվյալներ</th><th>Կարգավիճակ</th><th>Գործողություն</th></tr></thead><tbody>
-            <tr v-for="supplier in suppliers" :key="supplier.id"><td><strong>{{ supplier.name }}</strong><small class="cell-subtitle">{{ supplier.address || 'Հասցեն լրացված չէ' }}</small></td><td>{{ supplier.contact_name || '—' }}<small class="cell-subtitle">{{ supplier.phone || '—' }}</small></td><td>{{ supplier.tax_id || '—' }}</td><td>{{ supplier.contract_no || '—' }}<small class="cell-subtitle">{{ formatDisplayDate(supplier.contract_start) }} — {{ formatDisplayDate(supplier.contract_end) }}</small></td><td>{{ supplier.delivery_days ?? '—' }} օր</td><td><span class="completeness-pill" :class="missingCount(supplier) ? 'needs-data' : 'complete'">{{ missingCount(supplier) ? `Պակաս՝ ${missingCount(supplier)} դաշտ` : 'Ամբողջական' }}</span></td><td><span class="status-pill" :class="{ inactive: !supplier.active }">{{ supplier.active ? 'Ակտիվ' : 'Ապաակտիվ' }}</span></td><td><div class="table-actions"><button class="icon-button" :aria-label="`${supplier.name}՝ պատմություն`" title="Պատմություն" data-tooltip="Պատմություն" @click="openHistory(supplier)"><AppIcon name="history" /></button><button class="icon-button" :aria-label="`${supplier.name} խմբագրել`" title="Խմբագրել" data-tooltip="Խմբագրել" @click="openEdit(supplier)"><AppIcon name="edit" /></button><button v-if="supplier.active" class="icon-button danger" :aria-label="`${supplier.name} ապաակտիվացնել`" title="Ապաակտիվացնել" data-tooltip="Ապաակտիվացնել" @click="deactivate(supplier)"><AppIcon name="trash" /></button></div></td></tr>
+            <tr v-for="supplier in suppliers" :key="supplier.id"><td><strong>{{ supplier.name }}</strong><small class="cell-subtitle">{{ supplier.address || 'Հասցեն լրացված չէ' }}</small></td><td>{{ supplier.contact_name || '—' }}<small class="cell-subtitle">{{ supplier.phone || '—' }}</small></td><td>{{ supplier.tax_id || '—' }}</td><td>{{ supplier.contract_no || '—' }}<small class="cell-subtitle">{{ formatDisplayDate(supplier.contract_start) }} — {{ formatDisplayDate(supplier.contract_end) }}</small></td><td>{{ supplier.delivery_days ?? '—' }} օր</td><td><span class="completeness-pill" :class="missingCount(supplier) ? 'needs-data' : 'complete'">{{ missingCount(supplier) ? `Պակաս՝ ${missingCount(supplier)} դաշտ` : 'Ամբողջական' }}</span></td><td><span class="status-pill" :class="{ inactive: !supplier.active }">{{ supplier.active ? 'Ակտիվ' : 'Ապաակտիվ' }}</span></td><td><div class="table-actions"><button class="icon-button" :aria-label="`${supplier.name}՝ պատմություն`" title="Պատմություն" data-tooltip="Պատմություն" @click="openHistory(supplier)"><AppIcon name="history" /></button><button v-if="can('suppliers.edit')" class="icon-button" :aria-label="`${supplier.name} խմբագրել`" title="Խմբագրել" data-tooltip="Խմբագրել" @click="openEdit(supplier)"><AppIcon name="edit" /></button><button v-if="supplier.active && can('suppliers.delete')" class="icon-button danger" :aria-label="`${supplier.name} ապաակտիվացնել`" title="Ապաակտիվացնել" data-tooltip="Ապաակտիվացնել" @click="deactivate(supplier)"><AppIcon name="trash" /></button></div></td></tr>
             <tr v-if="!busy && !suppliers.length"><td colspan="8" class="table-empty">{{ search ? 'Որոնմանը համապատասխան մատակարար չկա։' : 'Մատակարարներ դեռ ավելացված չեն։' }}</td></tr>
             <tr v-if="busy && !suppliers.length"><td colspan="8" class="table-empty">Բեռնվում է…</td></tr>
         </tbody></table></div>

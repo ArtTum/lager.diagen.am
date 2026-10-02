@@ -15,7 +15,7 @@ class ConsumeStockRequest extends FormRequest
     {
         return [
             'product_id' => ['required', 'integer', 'exists:products,id'],
-            'qty' => ['required', 'numeric', 'gt:0', 'max:999999999'],
+            'qty' => ['required', 'numeric', 'decimal:0,3', 'gt:0', 'max:999999999'],
             'location_id' => ['nullable', 'integer', 'min:0'],
             'issue_type' => ['required', 'in:usage,expired,damaged,other'],
             'reason_note' => ['required_if:issue_type,other', 'nullable', 'string', 'min:3', 'max:1000'],

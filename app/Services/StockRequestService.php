@@ -203,6 +203,9 @@ class StockRequestService
             if ($remaining <= 0) {
                 continue;
             }
+            if ($remaining > $this->requests->centralFreeStock((int) $item->product_id, (int) $row->id) + 0.00001) {
+                throw ValidationException::withMessages(['items' => ['Ազատ պահեստային քանակը փոխվել է․ ուղարկումը չկատարվեց։']]);
+            }
             foreach ($this->requests->lockCentralLots((int) $item->product_id) as $lot) {
                 if ($remaining <= 0.00001) {
                     break;

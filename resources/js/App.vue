@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter, RouterView } from 'vue-router';
 import api from '@/services/api';
-import { currentUser, refreshCurrentUser } from '@/router';
+import { currentUser, refreshCurrentUser, setCurrentUser } from '@/router';
 import { userContextChanged } from '@/router/access';
 import NotificationBell from '@/components/NotificationBell.vue';
 
@@ -97,9 +97,13 @@ async function refreshUserContext() {
 }
 
 async function logout() {
-    try { await api.post('auth/logout'); } catch { /* Drop this browser session even if the server token expired. */ }
+    const token = localStorage.getItem('lagerAuthToken');
+    try {
+        if (token) await api.post('auth/logout', null, { headers: { Authorization: `Bearer ${token}` } });
+    } catch { /* Drop this browser session even if the server token expired. */ }
+    if (localStorage.getItem('lagerAuthToken') !== token) return;
     localStorage.removeItem('lagerAuthToken');
-    window.dispatchEvent(new CustomEvent('lager:user', { detail: null }));
+    setCurrentUser(null);
     router.replace('/login');
 }
 </script>

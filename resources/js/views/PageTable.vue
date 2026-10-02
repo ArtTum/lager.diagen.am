@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import ExportActions from '@/components/ExportActions.vue';
@@ -12,24 +12,27 @@ const busy = ref(false);
 const error = ref('');
 const search = ref('');
 let timer;
+let listRequestVersion = 0;
 const page = computed(() => Number(route.params.page || route.path.slice(1)) || 1);
 const title = computed(() => route.meta.title || 'Տվյալներ');
 const endpoint = computed(() => `pages/${route.path.slice(1)}`);
 
 async function load(pageNo = 1, pageSize = result.value?.pagination.per_page || 15) {
+    const version = ++listRequestVersion;
     busy.value = true;
     error.value = '';
     try {
         const response = await api.get(endpoint.value, { params: { page: pageNo, per_page: pageSize, search: search.value || undefined } });
-        result.value = response.data;
+        if (version === listRequestVersion) result.value = response.data;
     } catch (e) {
-        error.value = e.response?.data?.message || 'Տվյալները չհաջողվեց բեռնել։';
-    } finally { busy.value = false; }
+        if (version === listRequestVersion) error.value = e.response?.data?.message || 'Տվյալները չհաջողվեց բեռնել։';
+    } finally { if (version === listRequestVersion) busy.value = false; }
 }
 
 watch(search, () => { clearTimeout(timer); timer = setTimeout(() => load(1), 250); });
 watch(endpoint, () => { search.value = ''; result.value = null; load(1); });
 onMounted(() => load());
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(timer); });
 
 function display(value, key) {
     if (value === null || value === undefined || value === '') return '—';

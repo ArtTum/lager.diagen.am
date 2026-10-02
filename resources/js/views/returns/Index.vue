@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { formatDisplayDate } from '@/dateUtils';
@@ -20,15 +20,19 @@ const filterSelects = [{ key: 'direction', label: 'Ուղղություն', allL
 const can = (permission) => Boolean(user.value?.permissions?.[permission]);
 const form = reactive({ direction: 'branch_to_central', from_location: '', supplier_id: '', reason: '', items: [{ product_id: '', qty: '' }] });
 let debounce;
+let listRequestVersion = 0;
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
+  const version = ++listRequestVersion;
   busy.value = true; error.value = '';
-  try { const response = await api.get('returns', { params: { ...filters, page, per_page: pageSize, search: search.value || undefined } }); result.value = response.data; }
-  catch (e) { error.value = e.response?.data?.message || 'Վերադարձների ցանկը չհաջողվեց բեռնել։'; }
-  finally { busy.value = false; }
+  try { const response = await api.get('returns', { params: { ...filters, page, per_page: pageSize, search: search.value || undefined } }); if (version === listRequestVersion) result.value = response.data; }
+  catch (e) { if (version === listRequestVersion) error.value = e.response?.data?.message || 'Վերադարձների ցանկը չհաջողվեց բեռնել։'; }
+  finally { if (version === listRequestVersion) busy.value = false; }
 }
 function resetFilters() { Object.assign(filters, { direction: '', from: '', to: '' }); load(1); }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-onMounted(() => { load(); window.addEventListener('lager:user', (event) => { user.value = event.detail; }); });
+const updateUser = (event) => { user.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 function addLine() { form.items.push({ product_id: '', qty: '' }); }
 function removeLine(index) { if (form.items.length > 1) form.items.splice(index, 1); }
 async function openCreate() {

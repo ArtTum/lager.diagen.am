@@ -14,24 +14,27 @@ const busy = ref(false);
 const error = ref('');
 const page = ref(1);
 let debounce;
+let listRequestVersion = 0;
 const rows = computed(() => result.value?.data || []);
 const locations = computed(() => result.value?.locations || []);
 
 async function load(pageNumber = 1, pageSize = result.value?.pagination.per_page || 25) {
+  const version = ++listRequestVersion;
   busy.value = true;
   error.value = '';
   try {
     const response = await api.get('stock/matrix', { params: { page: pageNumber, search: search.value || undefined, per_page: pageSize } });
+    if (version !== listRequestVersion) return;
     result.value = response.data;
     page.value = response.data.pagination.current_page;
   } catch (e) {
-    error.value = e.response?.data?.message || 'Մնացորդների մատրիցան չհաջողվեց բեռնել։';
-  } finally { busy.value = false; }
+    if (version === listRequestVersion) error.value = e.response?.data?.message || 'Մնացորդների մատրիցան չհաջողվեց բեռնել։';
+  } finally { if (version === listRequestVersion) busy.value = false; }
 }
 
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => window.removeEventListener('lager:user', updateUser));
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 
 function quantity(row, locationId) { return Number(row.quantities?.[locationId] || 0); }
 async function exportCsv() {

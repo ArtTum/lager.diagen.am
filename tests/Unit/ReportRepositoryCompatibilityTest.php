@@ -67,6 +67,10 @@ class ReportRepositoryCompatibilityTest extends TestCase
             $table->decimal('qty', 12, 3);
             $table->decimal('unit_cost', 14, 2);
         });
+        Schema::create('movement_corrections', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('movement_id')->unique();
+        });
 
         DB::table('branches')->insert([
             ['id' => 7, 'name' => 'Էրեբունի', 'code' => 'EREB'],
@@ -92,6 +96,7 @@ class ReportRepositoryCompatibilityTest extends TestCase
 
     protected function tearDown(): void
     {
+        Schema::dropIfExists('movement_corrections');
         Schema::dropIfExists('movements');
         Schema::dropIfExists('users');
         Schema::dropIfExists('stock_lots');
@@ -131,12 +136,49 @@ class ReportRepositoryCompatibilityTest extends TestCase
         self::assertSame('Անի', $rows[0]->actor);
     }
 
+    public function test_consumption_reports_include_current_usage_reasons_and_exclude_write_offs(): void
+    {
+        $lotId = (int) DB::table('stock_lots')->where('lot_no', 'TARGET-LOT')->value('id');
+        foreach (['usage' => 6, 'expired' => 12, 'damaged' => 14] as $reason => $qty) {
+            DB::table('movements')->insert([
+                'movement_no' => 'MOV-'.$reason, 'product_id' => 11, 'lot_id' => $lotId,
+                'actor_id' => 20, 'type' => 'consumption', 'reason' => $reason,
+                'happened_at' => now()->subDays(2), 'from_location' => 7,
+                'qty' => $qty, 'unit_cost' => 25,
+            ]);
+        }
+
+        $repository = new ReportRepository;
+        $expense = $repository->query('branch_expense', now()->subDays(3)->toDateString(), now()->toDateString(), 7)->get();
+        $average = $repository->query('average_usage', '', '', 7)->get();
+
+        self::assertCount(1, $expense);
+        self::assertSame(10.0, (float) $expense[0]->used_qty);
+        self::assertSame(250.0, (float) $expense[0]->used_cost);
+        self::assertCount(1, $average);
+        self::assertSame(10.0, (float) $average[0]->consumed);
+        self::assertEqualsWithDelta(10 / 3, (float) $average[0]->monthly_average, 0.0001);
+    }
+
     public function test_branch_report_filter_options_only_expose_that_branch_employees(): void
     {
         $options = (new ReportRepository)->filterOptions(7, false, false);
 
         self::assertSame([20], $options['actors']->pluck('id')->all());
         self::assertSame([7], $options['branches']->pluck('id')->all());
+    }
+
+    public function test_reversed_consumption_is_excluded_from_usage_aggregates_but_remains_in_the_ledger(): void
+    {
+        $movementId = (int) DB::table('movements')->where('movement_no', 'MOV-001')->value('id');
+        DB::table('movement_corrections')->insert(['movement_id' => $movementId]);
+        $repository = new ReportRepository;
+        $from = now()->subDays(3)->toDateString();
+        $to = now()->toDateString();
+
+        self::assertCount(0, $repository->query('branch_expense', $from, $to, 7)->get());
+        self::assertCount(0, $repository->query('average_usage', '', '', 7)->get());
+        self::assertSame(['MOV-001'], $repository->query('movements', $from, $to, 7)->get()->pluck('document_no')->all());
     }
 
     public function test_report_export_applies_combined_filters_and_csv_contains_only_matching_rows(): void

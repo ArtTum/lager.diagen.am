@@ -39,7 +39,8 @@ class ProductTraceRepository
             ->when($location > 0, fn ($query) => $query->where(fn ($where) => $where->where('movements.from_location', $location)->orWhere('movements.to_location', $location)))
             ->select('movements.id', 'movements.movement_no', 'movements.type', 'movements.qty', 'movements.reference', 'movements.reason', 'movements.happened_at',
                 'l.lot_no', 'u.name as actor_name')
-            ->selectRaw("COALESCE(f.name, 'Կենտրոնական պահեստ') as from_name, COALESCE(t.name, 'Կենտրոնական պահեստ') as to_name")
+            ->selectRaw("CASE WHEN movements.from_location = 0 THEN 'Կենտրոնական պահեստ' WHEN movements.from_location IS NULL THEN 'Դրսից' ELSE COALESCE(f.name, 'Անհայտ պահեստ') END as from_name")
+            ->selectRaw("CASE WHEN movements.to_location = 0 THEN 'Կենտրոնական պահեստ' WHEN movements.to_location IS NULL THEN 'Դուրս' ELSE COALESCE(t.name, 'Անհայտ պահեստ') END as to_name")
             ->orderByDesc('movements.happened_at')->orderByDesc('movements.id')->paginate(10, ['*'], 'movements_page', $page);
     }
 

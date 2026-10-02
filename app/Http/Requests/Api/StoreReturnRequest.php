@@ -20,7 +20,7 @@ class StoreReturnRequest extends FormRequest
             'reason' => ['required', 'string', 'min:3', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'distinct', 'exists:products,id'],
-            'items.*.qty' => ['required', 'numeric', 'gt:0', 'max:999999999'],
+            'items.*.qty' => ['required', 'numeric', 'decimal:0,3', 'gt:0', 'max:999999999'],
         ];
     }
 }

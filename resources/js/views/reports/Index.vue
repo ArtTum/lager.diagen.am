@@ -27,6 +27,7 @@ const loading = ref(false);
 const exporting = ref(false);
 const error = ref('');
 const page = ref(1);
+let listRequestVersion = 0;
 
 const rows = computed(() => result.value?.data || []);
 const columns = computed(() => Object.entries(result.value?.columns || {}));
@@ -46,6 +47,7 @@ const showDateFilter = computed(() => !['stock_by_location', 'central_stock', 'b
 const costColumns = ['value', 'unit_cost', 'average_unit_cost', 'used_cost'];
 
 async function load(nextPage = 1, pageSize = result.value?.pagination.per_page || 15) {
+  const version = ++listRequestVersion;
   loading.value = true;
   error.value = '';
 
@@ -58,12 +60,13 @@ async function load(nextPage = 1, pageSize = result.value?.pagination.per_page |
         per_page: pageSize,
       },
     });
+    if (version !== listRequestVersion) return;
     result.value = response.data;
     page.value = nextPage;
   } catch (exception) {
-    error.value = exception.response?.data?.message || 'Հաշվետվությունը չհաջողվեց բեռնել։';
+    if (version === listRequestVersion) error.value = exception.response?.data?.message || 'Հաշվետվությունը չհաջողվեց բեռնել։';
   } finally {
-    loading.value = false;
+    if (version === listRequestVersion) loading.value = false;
   }
 }
 
@@ -127,7 +130,7 @@ onMounted(() => {
   window.addEventListener('lager:user', onUserChange);
 });
 
-onBeforeUnmount(() => window.removeEventListener('lager:user', onUserChange));
+onBeforeUnmount(() => { listRequestVersion += 1; window.removeEventListener('lager:user', onUserChange); });
 </script>
 
 <template>

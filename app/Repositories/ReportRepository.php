@@ -109,9 +109,6 @@ class ReportRepository
             ->leftJoin('categories as c', 'c.id', '=', 'products.category_id')
             ->leftJoin('suppliers as s', 's.id', '=', 'products.supplier_id')
             ->where('products.active', true)
-            ->when($type === 'low_stock', fn ($builder) => $builder->where(function ($builder): void {
-                $builder->whereNull('l.id')->orWhere('l.qty', '>', 0);
-            }))
             ->when($filters['product_id'] ?? null, fn ($builder, $id) => $builder->where('products.id', $id))
             ->when($filters['supplier_id'] ?? null, fn ($builder, $id) => $builder->where('products.supplier_id', $id))
             ->when($filters['category_id'] ?? null, fn ($builder, $id) => $builder->where('products.category_id', $id))
@@ -178,7 +175,8 @@ class ReportRepository
     {
         return Movement::query()->join('products as p', 'p.id', '=', 'movements.product_id')
             ->join('branches as b', 'b.id', '=', 'movements.from_location')
-            ->where('movements.type', 'consumption')->where('movements.reason', 'Ներքին օգտագործում')
+            ->where('movements.type', 'consumption')->whereIn('movements.reason', ['Ներքին օգտագործում', 'usage'])
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('movement_corrections as mc')->whereColumn('mc.movement_id', 'movements.id'))
             ->whereDate('movements.happened_at', '>=', $from)->whereDate('movements.happened_at', '<=', $to)
             ->when($branchId !== null, fn ($query) => $query->where('movements.from_location', $branchId))
             ->when($filters['product_id'] ?? null, fn ($query, $id) => $query->where('p.id', $id))
@@ -281,12 +279,13 @@ class ReportRepository
     {
         return Movement::query()->join('products as p', 'p.id', '=', 'movements.product_id')
             ->join('branches as b', 'b.id', '=', 'movements.from_location')
-            ->where('movements.type', 'consumption')->where('movements.reason', 'Ներքին օգտագործում')
+            ->where('movements.type', 'consumption')->whereIn('movements.reason', ['Ներքին օգտագործում', 'usage'])
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('movement_corrections as mc')->whereColumn('mc.movement_id', 'movements.id'))
             ->where('movements.happened_at', '>=', now()->startOfDay()->subDays(90))
             ->when($branchId !== null, fn ($query) => $query->where('movements.from_location', $branchId))
             ->when($filters['product_id'] ?? null, fn ($query, $id) => $query->where('p.id', $id))
             ->groupBy('movements.from_location', 'b.id', 'b.name', 'p.id', 'p.code', 'p.name')
-            ->selectRaw("COALESCE(b.name, 'Կենտրոնական պահեստ') as branch_name, p.code, p.name as product_name, SUM(movements.qty) as consumed, SUM(movements.qty)/3 as monthly_average")
+            ->selectRaw("COALESCE(b.name, 'Կենտրոնական պահեստ') as branch_name, p.code, p.name as product_name, SUM(movements.qty) as consumed, SUM(movements.qty)/3.0 as monthly_average")
             ->orderBy('branch_name')->orderBy('product_name');
     }
 

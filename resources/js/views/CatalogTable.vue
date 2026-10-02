@@ -92,8 +92,11 @@ function togglePermissionGroup(items, enabled) {
     form.permissions = enabled ? [...new Set([...otherPermissions, ...moduleCodes])] : otherPermissions;
 }
 let timer;
+let listRequestVersion = 0;
+let formRequestVersion = 0;
 
 async function load(pageNo = 1, pageSize = result.value?.pagination.per_page || 15) {
+    const version = ++listRequestVersion;
     busy.value = true; error.value = '';
     try {
         const response = await api.get(`pages/${page.value}`, { params: {
@@ -102,16 +105,16 @@ async function load(pageNo = 1, pageSize = result.value?.pagination.per_page || 
             search: search.value || undefined,
             barcode: page.value === 'products' ? (barcodeSearch.value.trim() || undefined) : undefined,
         } });
-        result.value = response.data;
-    } catch (e) { error.value = e.response?.data?.message || 'Ցանկը չհաջողվեց բեռնել։'; }
-    finally { busy.value = false; }
+        if (version === listRequestVersion) result.value = response.data;
+    } catch (e) { if (version === listRequestVersion) error.value = e.response?.data?.message || 'Ցանկը չհաջողվեց բեռնել։'; }
+    finally { if (version === listRequestVersion) busy.value = false; }
 }
 
 watch(search, () => { clearTimeout(timer); timer = setTimeout(() => load(1), 250); });
 watch(page, () => { result.value = null; search.value = ''; barcodeSearch.value = ''; load(1); });
 const updateUser = (event) => { me.value = event.detail; };
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => { clearTimeout(timer); window.removeEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; formRequestVersion += 1; clearTimeout(timer); window.removeEventListener('lager:user', updateUser); });
 
 function applyScannedBarcode(value) {
     barcodeSearch.value = value;
@@ -183,20 +186,25 @@ async function confirmDestructiveAction() {
 }
 
 async function openCreate() {
+    const version = ++formRequestVersion;
     selected.value = null; error.value = ''; Object.assign(form, structuredClone(emptyByPage[page.value]));
-    try { await loadOptions(); modal.value = true; } catch (e) { error.value = e.response?.data?.message || 'Ձևի տվյալները չհաջողվեց բեռնել։'; }
+    try { await loadOptions(); if (version === formRequestVersion) modal.value = true; } catch (e) { if (version === formRequestVersion) error.value = e.response?.data?.message || 'Ձևի տվյալները չհաջողվեց բեռնել։'; }
 }
 
 async function openEdit(row) {
-    selected.value = row.id; error.value = '';
+    const version = ++formRequestVersion;
+    error.value = '';
     try {
         await loadOptions();
+        if (version !== formRequestVersion) return;
         const response = await api.get(`catalog/${page.value}/${row.id}`);
+        if (version !== formRequestVersion) return;
+        selected.value = row.id;
         const data = response.data.data;
         if (page.value === 'roles') Object.assign(form, { title: data.title, permissions: data.permissions || [] });
         else Object.assign(form, { ...emptyByPage[page.value], ...data, password: '' });
         modal.value = true;
-    } catch (e) { error.value = e.response?.data?.message || 'Գրառումը չհաջողվեց բացել։'; }
+    } catch (e) { if (version === formRequestVersion) error.value = e.response?.data?.message || 'Գրառումը չհաջողվեց բացել։'; }
 }
 
 async function save() {
@@ -296,7 +304,7 @@ function cell(row, key) {
         <div v-else class="form-grid"><label v-for="[key,label,type,required] in fields" :key="key" class="form-field" :class="{ 'span-2': ['address','barcode','storage_conditions'].includes(key) }"><span v-if="type === 'checkbox'">{{ label }}{{ required ? ' *' : '' }}</span><template v-else>{{ label }}{{ required ? ' *' : '' }}</template>
             <select v-searchable-select v-if="['categories','suppliers','branches','roles'].includes(type)" v-model="form[key]" class="form-control" :required="!!required"><option value="">{{ key === 'category_id' || key === 'branch_id' ? 'Ընտրովի' : 'Ընտրել' }}</option><option v-for="item in selectOptions(type)" :key="item.id" :value="item.id">{{ item.name || item.title }}</option></select>
             <input v-else-if="type === 'checkbox'" v-model="form[key]" type="checkbox">
-            <input v-else v-model="form[key]" class="form-control" :type="type" :required="!!required && (key !== 'password' || !selected)" :min="type === 'number' ? '0' : undefined" :step="type === 'number' ? '0.001' : undefined" :maxlength="['name','code','unit'].includes(key) ? 190 : undefined">
+            <input v-else v-model="form[key]" class="form-control" :type="type" :required="!!required && (key !== 'password' || !selected)" :min="type === 'number' ? '0' : undefined" :step="type === 'number' ? (key === 'purchase_price' ? '0.01' : '0.001') : undefined" :maxlength="['name','code','unit'].includes(key) ? 190 : undefined">
         </label></div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="modal=false">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Պահպանել' }}</button></div>
 </form></div>

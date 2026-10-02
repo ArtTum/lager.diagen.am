@@ -38,6 +38,13 @@ class User extends Authenticatable
         $this->attributes['password'] = $isLegacyDefaultHash ? $value : Hash::make($value);
     }
 
+    public function setPlainPassword(#[\SensitiveParameter] string $value): static
+    {
+        $this->attributes['password'] = Hash::make($value);
+
+        return $this;
+    }
+
     public function role(): BelongsTo
     {
         return $this->belongsTo(Role::class);

@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
@@ -9,6 +9,7 @@ import { formatDisplayDate } from '@/dateUtils';
 const route = useRoute(); const user = ref(currentUser()); const result = ref(null);
 const busy = ref(false); const saving = ref(false); const exporting = ref(false); const error = ref(''); const notice = ref('');
 const selected = ref(null); const search = ref(''); const reason = ref(''); let debounce;
+let listRequestVersion = 0;
 const filters = reactive({ from: '', to: '', product_id: '', category_id: '', branch_id: '', supplier_id: '', actor_id: '', lot: '', type: '' });
 const rows = computed(() => result.value?.data || []); const options = computed(() => result.value?.filters || {});
 const can = (code) => Boolean(user.value?.permissions?.[code]);
@@ -16,10 +17,11 @@ const canViewSuppliers = computed(() => can('suppliers.view'));
 const reversible = (row) => ['consumption', 'inventory_adjustment', 'receipt', 'return_supplier'].includes(row.type)
   && ((row.from_location !== null && row.to_location === null) || (row.from_location === null && row.to_location !== null));
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
+  const version = ++listRequestVersion;
   busy.value = true; error.value = '';
-  try { const response = await api.get('movements', { params: { ...filters, search: search.value || undefined, page, per_page: pageSize } }); result.value = response.data; }
-  catch (e) { error.value = e.response?.data?.message || 'Շարժերի ցանկը չհաջողվեց բեռնել։'; }
-  finally { busy.value = false; }
+  try { const response = await api.get('movements', { params: { ...filters, search: search.value || undefined, page, per_page: pageSize } }); if (version === listRequestVersion) result.value = response.data; }
+  catch (e) { if (version === listRequestVersion) error.value = e.response?.data?.message || 'Շարժերի ցանկը չհաջողվեց բեռնել։'; }
+  finally { if (version === listRequestVersion) busy.value = false; }
 }
 function applyFilters() { load(1); }
 async function exportMovements(format) {
@@ -32,7 +34,9 @@ async function exportMovements(format) {
   finally { exporting.value = false; }
 }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-onMounted(() => { load(); window.addEventListener('lager:user', (event) => { user.value = event.detail; }); });
+const updateUser = (event) => { user.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 function openReverse(row) { selected.value = row; reason.value = ''; error.value = ''; }
 async function reverse() {
   if (!selected.value || saving.value) return; saving.value = true; error.value = '';

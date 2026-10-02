@@ -6,9 +6,13 @@ use App\Models\Branch;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Repositories\AuthRepository;
 use Database\Seeders\LagerAccessSeeder;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Assert;
 use Tests\TestCase;
 
 class AuthPermissionApiTest extends TestCase
@@ -199,6 +203,83 @@ class AuthPermissionApiTest extends TestCase
         $storedHash = User::query()->where('email', 'new-branch@example.test')->value('password');
         self::assertNotSame($hashLookingPassword, $storedHash);
         self::assertTrue(password_verify($hashLookingPassword, $storedHash));
+    }
+
+    public function test_login_cannot_overwrite_a_password_reset_completed_after_the_initial_read(): void
+    {
+        $user = User::query()->create([
+            'name' => 'Concurrent account', 'email' => 'concurrent@example.test',
+            'password' => password_hash('original-password', PASSWORD_BCRYPT, ['cost' => 10]),
+            'active' => true,
+        ]);
+        $replacementHash = Hash::make('replacement-password');
+        $this->changeAccountAfterAuthRead(static function (User $snapshot) use ($replacementHash): void {
+            DB::table('users')->where('id', $snapshot->id)->update(['password' => $replacementHash]);
+        });
+
+        $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'original-password'])
+            ->assertUnprocessable()->assertJsonValidationErrors('email');
+
+        self::assertSame($replacementHash, $user->fresh()->password);
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+    }
+
+    public function test_login_cannot_issue_a_token_after_concurrent_account_deactivation(): void
+    {
+        $user = User::query()->create([
+            'name' => 'Concurrent account', 'email' => 'concurrent@example.test',
+            'password' => 'original-password', 'active' => true,
+        ]);
+        $this->changeAccountAfterAuthRead(static function (User $snapshot): void {
+            DB::table('users')->where('id', $snapshot->id)->update(['active' => false]);
+        });
+
+        $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'original-password'])
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+    }
+
+    public function test_login_rechecks_a_concurrent_hash_upgrade_without_rejecting_valid_credentials(): void
+    {
+        $user = User::query()->create([
+            'name' => 'Concurrent account', 'email' => 'concurrent@example.test',
+            'password' => password_hash('original-password', PASSWORD_BCRYPT, ['cost' => 10]),
+            'active' => true,
+        ]);
+        $upgradedHash = Hash::make('original-password');
+        $this->changeAccountAfterAuthRead(static function (User $snapshot) use ($upgradedHash): void {
+            DB::table('users')->where('id', $snapshot->id)->update(['password' => $upgradedHash]);
+        });
+
+        $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'original-password'])
+            ->assertOk()->assertJsonPath('data.user.id', $user->id);
+
+        self::assertSame($upgradedHash, $user->fresh()->password);
+        $this->assertDatabaseCount('personal_access_tokens', 1);
+    }
+
+    private function changeAccountAfterAuthRead(\Closure $change): void
+    {
+        $this->app->instance(AuthRepository::class, new class($change) extends AuthRepository
+        {
+            public function __construct(private readonly \Closure $change) {}
+
+            public function findByEmail(string $email): ?User
+            {
+                $snapshot = parent::findByEmail($email);
+                ($this->change)($snapshot);
+
+                return $snapshot;
+            }
+
+            public function findByEmailForUpdate(string $email): ?User
+            {
+                Assert::assertGreaterThan(0, DB::transactionLevel());
+
+                return parent::findByEmailForUpdate($email);
+            }
+        });
     }
 
     public function test_role_permission_changes_take_effect_for_an_existing_token_on_the_next_request(): void

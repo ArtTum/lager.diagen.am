@@ -17,7 +17,7 @@ class ReviewStockRequest extends FormRequest
             'decision' => ['required', 'in:start_review,approve,reject'],
             'rejection_reason' => ['required_if:decision,reject', 'nullable', 'string', 'min:3', 'max:2000'],
             'approved' => ['required_if:decision,approve', 'array'],
-            'approved.*' => ['required_if:decision,approve', 'numeric', 'min:0'],
+            'approved.*' => ['required_if:decision,approve', 'numeric', 'decimal:0,3', 'min:0', 'max:999999999'],
         ];
     }
 }

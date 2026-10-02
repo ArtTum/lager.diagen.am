@@ -4,6 +4,9 @@ namespace Tests\Unit;
 
 use App\Repositories\PageDataRepository;
 use Carbon\Carbon;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class ExpiryPageQueryTest extends TestCase
@@ -48,5 +51,46 @@ class ExpiryPageQueryTest extends TestCase
 
         self::assertStringContainsString(' < ', $query->toSql());
         self::assertContains('2026-09-30', $query->getBindings());
+    }
+
+    public function test_days_left_uses_the_same_application_date_as_expiry_filters(): void
+    {
+        DB::connection()->getPdo()->sqliteCreateFunction('DATEDIFF', static fn (string $end, string $start): int => (int) ((strtotime($end) - strtotime($start)) / 86400));
+        Schema::create('products', function (Blueprint $table): void {
+            $table->id();
+            $table->string('code');
+            $table->string('name');
+            $table->string('unit');
+            $table->boolean('expiry_control');
+        });
+        foreach (['branches', 'suppliers'] as $name) {
+            Schema::create($name, function (Blueprint $table): void {
+                $table->id();
+                $table->string('name');
+            });
+        }
+        Schema::create('stock_lots', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('product_id');
+            $table->unsignedBigInteger('location_id');
+            $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->string('lot_no');
+            $table->date('expires_on');
+            $table->decimal('qty', 12, 3);
+        });
+        try {
+            DB::table('products')->insert(['id' => 1, 'code' => 'EXP', 'name' => 'Expiry', 'unit' => 'հատ', 'expiry_control' => true]);
+            DB::table('stock_lots')->insert([
+                'product_id' => 1, 'location_id' => 0, 'lot_no' => 'TODAY',
+                'expires_on' => now()->toDateString(), 'qty' => 1,
+            ]);
+            [, $query] = (new PageDataRepository)->definition('expiry', 0, ['threshold' => '7']);
+
+            self::assertSame(0, (int) $query->first()->days_left);
+        } finally {
+            foreach (['stock_lots', 'suppliers', 'branches', 'products'] as $name) {
+                Schema::dropIfExists($name);
+            }
+        }
     }
 }

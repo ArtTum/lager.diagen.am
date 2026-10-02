@@ -155,12 +155,55 @@ class PermissionServiceTest extends TestCase
         $widerRole = new Role(['name' => 'stock_admin']);
         $widerRole->setRelation('permissions', collect([
             new Permission(['code' => 'stock.view']),
-            new Permission(['code' => 'stock.adjust']),
+            new Permission(['code' => 'stock.edit']),
         ]));
 
         $service = app(PermissionService::class);
         self::assertTrue($service->canAssignRole($actor, $allowedRole));
         self::assertFalse($service->canAssignRole($actor, $widerRole));
+    }
+
+    public function test_obsolete_grants_do_not_prevent_assignment_of_an_otherwise_permitted_role(): void
+    {
+        $actor = new User(['active' => true]);
+        $actorRole = new Role(['name' => 'catalog_editor']);
+        $actorRole->setRelation('permissions', collect([new Permission(['code' => 'stock.view'])]));
+        $actor->setRelation('role', $actorRole);
+        $targetRole = new Role(['name' => 'imported_stock_staff']);
+        $targetRole->setRelation('permissions', collect([
+            new Permission(['code' => 'stock.view']),
+            new Permission(['code' => 'stock.adjust']),
+        ]));
+
+        self::assertTrue(app(PermissionService::class)->canAssignRole($actor, $targetRole));
+    }
+
+    public function test_admin_role_assignment_ignores_obsolete_catalog_rows_but_rejects_current_extra_grants(): void
+    {
+        Schema::create('permissions', function ($table): void {
+            $table->id();
+            $table->string('code')->unique();
+        });
+
+        try {
+            Permission::query()->create(['code' => 'stock.view']);
+            Permission::query()->create(['code' => 'stock.adjust']);
+            $actor = new User(['active' => true]);
+            $actor->setRelation('role', new Role(['name' => 'admin']));
+            $target = new Role(['name' => 'admin']);
+
+            self::assertTrue(app(PermissionService::class)->canAssignRole($actor, $target));
+
+            $restricted = new User(['active' => true]);
+            $role = new Role(['name' => 'viewer']);
+            $role->setRelation('permissions', collect([new Permission(['code' => 'stock.view'])]));
+            $restricted->setRelation('role', $role);
+            Permission::query()->create(['code' => 'users.edit']);
+
+            self::assertFalse(app(PermissionService::class)->canAssignRole($restricted, $target));
+        } finally {
+            Schema::dropIfExists('permissions');
+        }
     }
 
     public static function centralOnlyCapabilities(): array
