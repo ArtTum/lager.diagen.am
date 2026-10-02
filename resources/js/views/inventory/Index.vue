@@ -33,6 +33,7 @@ const visibleLines = computed(() => {
     .filter(Boolean).join(' ').toLocaleLowerCase('hy-AM').includes(query));
 });
 const can = (code) => Boolean(user.value?.permissions?.[code]);
+const canIndependentlyApprove = (row) => row.status === 'counted' && row.lines_count > 0 && can('inventory.approve') && Number(row.started_by) !== Number(user.value?.id);
 const start = reactive({ location_id: '', note: '' });
 const counts = reactive({});
 let debounce;
@@ -119,7 +120,7 @@ async function save() {
   finally { saving.value = false; }
 }
 async function approve() {
-  if (!selected.value || saving.value) return;
+  if (!selected.value || saving.value || !canIndependentlyApprove(selected.value)) return;
   saving.value = true; error.value = '';
   try {
     await api.post(`inventory/${selected.value.id}/approve`);
@@ -140,7 +141,7 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
   <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով կամ պահեստով…"></label><div class="list-count">Գրառումներ՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions page="inventory" endpoint="inventory/export" :search="search" :filters="filters" :disabled="busy" /></div>
     <ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
     <div class="table-scroll"><table class="data-table"><thead><tr><th>Համար</th><th>Պահեստ</th><th>Տողեր</th><th>Սկսել է</th><th>Ամսաթիվ</th><th>Կարգավիճակ</th><th>Գործողություն</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.inventory_no }}</strong></td><td>{{ row.location?.name || 'Կենտրոնական պահեստ' }}</td><td>{{ row.counted_lines_count }}/{{ row.lines_count }}</td><td>{{ row.starter?.name || '—' }}</td><td>{{ formatDisplayDate(row.started_at) }}</td><td><span class="workflow-status" :class="`state-${row.status}`">{{ status(row.status) }}</span></td><td><div class="table-actions"><button v-if="['open','counted'].includes(row.status) && row.lines_count > 0 && can('inventory.edit')" class="secondary-button compact-action" @click="openCount(row)">{{ row.status === 'counted' ? 'Դիտել հաշվարկը' : 'Լրացնել քանակները' }}</button><span v-else-if="['open','counted'].includes(row.status) && row.lines_count === 0" class="workflow-status state-warning" title="Այս գրառման սկզբնական մնացորդները պահպանված չեն։ Սկսեք նոր գույքագրում։">Տողերը բացակայում են</span><button v-if="row.status==='counted' && row.lines_count > 0 && can('inventory.approve')" class="primary-button compact-action" @click="selected=row;dialog='approve';error=''">Անկախ հաստատել</button><RouterLink v-if="row.status==='closed' && can('inventory.view')" class="secondary-button compact-action" :to="`/inventory/${row.id}/act`">Տպել ակտը</RouterLink></div></td></tr>
+      <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.inventory_no }}</strong></td><td>{{ row.location?.name || 'Կենտրոնական պահեստ' }}</td><td>{{ row.counted_lines_count }}/{{ row.lines_count }}</td><td>{{ row.starter?.name || '—' }}</td><td>{{ formatDisplayDate(row.started_at) }}</td><td><span class="workflow-status" :class="`state-${row.status}`">{{ status(row.status) }}</span></td><td><div class="table-actions"><button v-if="['open','counted'].includes(row.status) && row.lines_count > 0 && can('inventory.edit')" class="secondary-button compact-action" @click="openCount(row)">{{ row.status === 'counted' ? 'Դիտել հաշվարկը' : 'Լրացնել քանակները' }}</button><span v-else-if="['open','counted'].includes(row.status) && row.lines_count === 0" class="workflow-status state-warning" title="Այս գրառման սկզբնական մնացորդները պահպանված չեն։ Սկսեք նոր գույքագրում։">Տողերը բացակայում են</span><button v-if="canIndependentlyApprove(row)" class="primary-button compact-action" @click="selected=row;dialog='approve';error=''">Անկախ հաստատել</button><RouterLink v-if="row.status==='closed' && can('inventory.view')" class="secondary-button compact-action" :to="`/inventory/${row.id}/act`">Տպել ակտը</RouterLink></div></td></tr>
       <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">Գույքագրման գրառումներ չկան։ Սկսեք առաջին գույքագրումը։</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
     </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 

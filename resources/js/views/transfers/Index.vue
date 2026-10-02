@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
 import ListFilterBar from '@/components/ListFilterBar.vue';
+import ExportActions from '@/components/ExportActions.vue';
 import { formatDisplayDate } from '@/dateUtils';
 
 const route = useRoute();
@@ -23,7 +24,6 @@ const filters = reactive({ status: '', from_branch: '', to_branch: '', from: '',
 const form = reactive({ from_branch: '', to_branch: '', reason: '', items: [{ product_id: '', qty: '' }] });
 let debounce;
 let listRequestVersion = 0;
-const isAdmin = computed(() => user.value?.role?.name === 'admin');
 const isCentral = computed(() => user.value?.location_id === 0);
 const canCreate = computed(() => Boolean(user.value?.permissions?.['transfers.create']));
 const canApprove = computed(() => Boolean(user.value?.permissions?.['transfers.approve']));
@@ -67,8 +67,8 @@ async function save() {
 
 function actionFor(row) {
     if (['pending', 'stock_shortage'].includes(row.status) && canApprove.value) return ['approve', row.status === 'stock_shortage' ? 'Վերաստուգել պաշարը' : 'Հաստատել'];
-    if (row.status === 'approved' && canEdit.value && (isAdmin.value || isCentral.value || Number(user.value?.branch?.id) === Number(row.from_branch_id))) return ['ship', 'Ուղարկել'];
-    if (row.status === 'shipped' && canEdit.value && (isAdmin.value || Number(user.value?.branch?.id) === Number(row.to_branch_id))) return ['receive', 'Ստանալ'];
+    if (row.status === 'approved' && canEdit.value && (isCentral.value || Number(user.value?.branch?.id) === Number(row.from_branch_id))) return ['ship', 'Ուղարկել'];
+    if (row.status === 'shipped' && canEdit.value && Number(user.value?.branch?.id) === Number(row.to_branch_id)) return ['receive', 'Ստանալ'];
     return null;
 }
 function confirm(row, action) { confirmAction.value = { row, action }; }
@@ -87,14 +87,14 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
 <template>
     <div class="page-heading"><div><p class="eyebrow">ՊԱՀԵՍՏԱՅԻՆ ԳՈՐԾԸՆԹԱՑ</p><h1>{{ route.meta.title }}</h1><p class="muted">Տեղափոխումը նախ հաստատվում է, հետո ուղարկվում աղբյուր պահեստից և վերջում ընդունվում ստացող մասնաճյուղում։</p></div><button v-if="canCreate" class="primary-button" @click="openCreate"><span><AppIcon name="add" /></span>Նոր տեղափոխում</button></div>
     <div v-if="error && !modal && !confirmAction" class="alert-error" role="alert">{{ error }}</div><div v-if="notice" class="alert-info" role="status">{{ notice }}</div>
-    <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով, պահեստով կամ կարգավիճակով…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div></div><ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
+    <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով, պահեստով կամ կարգավիճակով…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions page="transfers" :search="search" :filters="filters" :disabled="busy" /></div><ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
         <div class="table-scroll"><table class="data-table transfer-table"><thead><tr><th>Փաստաթուղթ</th><th>Ումից</th><th>Ուր</th><th>Կարգավիճակ</th><th>Պատճառ</th><th>Ստեղծվել է</th><th>Գործողություն</th></tr></thead><tbody>
             <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.transfer_no }}</strong></td><td>{{ row.from_branch }}</td><td>{{ row.to_branch }}</td><td><span class="workflow-status" :class="`state-${row.status}`">{{ statusLabel(row.status) }}</span></td><td>{{ row.reason || '—' }}</td><td>{{ formatDisplayDate(row.created_at) }}</td><td><button v-if="actionFor(row)" class="secondary-button compact-action" @click="confirm(row,actionFor(row)[0])">{{ actionFor(row)[1] }}</button><span v-else class="muted">—</span></td></tr>
             <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">{{ search ? 'Որոնմանը համապատասխան տեղափոխում չկա։' : 'Տեղափոխումներ դեռ չկան։' }}</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
         </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
     <div v-if="modal" class="modal-backdrop" @click.self="modal=false"><form class="modal-card transfer-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԵՍՏԻ ՄԻՋԵՎ ՏԵՂԱՓՈԽՈՒՄ</p><h2>Նոր տեղափոխման հարցում</h2><p>Հաստատումից հետո պաշարը կհանվի միայն ուղարկման պահին։</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" @click="modal=false"><AppIcon name="xmark" /></button></div>
-        <div class="form-grid"><label class="form-field">Ուղարկող պահեստ *<select v-searchable-select v-model="form.from_branch" class="form-control" :disabled="!isAdmin && !isCentral && !!user?.branch?.id" required><option value="">Ընտրել</option><option v-for="b in options.branches" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field">Ստացող պահեստ *<select v-searchable-select v-model="form.to_branch" class="form-control" required><option value="">Ընտրել նպատակակետը</option><option v-for="b in options.branches.filter((item)=>Number(item.id)!==Number(form.from_branch))" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field span-2">Պատճառ *<textarea v-model.trim="form.reason" class="form-control" minlength="3" maxlength="2000" required placeholder="Նշեք տեղափոխման պատճառը"></textarea></label></div>
+        <div class="form-grid"><label class="form-field">Ուղարկող պահեստ *<select v-searchable-select v-model="form.from_branch" class="form-control" :disabled="!isCentral && !!user?.branch?.id" required><option value="">Ընտրել</option><option v-for="b in options.branches" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field">Ստացող պահեստ *<select v-searchable-select v-model="form.to_branch" class="form-control" required><option value="">Ընտրել նպատակակետը</option><option v-for="b in options.branches.filter((item)=>Number(item.id)!==Number(form.from_branch))" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field span-2">Պատճառ *<textarea v-model.trim="form.reason" class="form-control" minlength="3" maxlength="2000" required placeholder="Նշեք տեղափոխման պատճառը"></textarea></label></div>
         <div class="transfer-lines"><div class="section-label">Ապրանքներ</div><div v-for="(line,index) in form.items" :key="index" class="transfer-line-row"><label class="form-field">Ապրանք<select v-searchable-select v-model="line.product_id" class="form-control" required><option value="">Ընտրել ապրանքը</option><option v-for="p in options.products" :key="p.id" :value="p.id">{{ p.code }} · {{ p.name }}</option></select></label><label class="form-field">Քանակ<input v-model="line.qty" class="form-control" type="number" min="0.001" step="0.001" required></label><button v-if="form.items.length>1" class="icon-button danger remove-line" type="button" title="Հեռացնել տողը" @click="removeItem(index)"><AppIcon name="xmark" /></button></div><button class="secondary-button add-line" type="button" @click="addItem"><AppIcon name="add" /> Ավելացնել ապրանք</button></div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button class="secondary-button" type="button" @click="modal=false">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Ուղարկել հաստատման' }}</button></div>
     </form></div>

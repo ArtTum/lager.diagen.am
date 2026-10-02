@@ -381,3 +381,126 @@ test('dashboard metrics refresh on a realtime invalidation and stop after unmoun
         assert.equal(calls, 2);
     } finally { if (view.root.isConnected) view.unmount(); }
 });
+
+test('transfer receiving is offered only to an editor assigned to the actual destination branch', async () => {
+    const profiles = [
+        { label: 'central administrator', user: { role: { name: 'admin' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.edit': true } }, expected: false },
+        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.edit': true } }, expected: false },
+        { label: 'destination branch editor', user: { role: { name: 'branch' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.edit': true } }, expected: true },
+        { label: 'destination branch viewer', user: { role: { name: 'viewer' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.view': true } }, expected: false },
+    ];
+    for (const { label, user, expected } of profiles) {
+        const view = await mountView('views/transfers/Index.vue', '/transfers', {
+            async get() { return list([{ id: 7, transfer_no: 'SHIPPED-TRANSFER', status: 'shipped', from_branch_id: 2, to_branch_id: 3 }]); },
+        }, user);
+        try {
+            await settle();
+            const receive = [...view.root.querySelectorAll('tbody button')].find((button) => button.textContent === 'Ստանալ');
+            assert.equal(Boolean(receive), expected, label);
+            if (receive) { receive.click(); await settle(); assert.ok(view.root.querySelector('.confirm-card')); }
+        } finally { view.unmount(); }
+    }
+});
+
+test('transfer shipping follows the actual source or central location even for an administrator role', async () => {
+    const profiles = [
+        { label: 'central storekeeper', user: { role: { name: 'storekeeper' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.edit': true } }, expected: true },
+        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.edit': true } }, expected: true },
+        { label: 'destination branch administrator', user: { role: { name: 'admin' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.edit': true, 'transfers.create': true } }, expected: false },
+        { label: 'source branch viewer', user: { role: { name: 'viewer' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true } }, expected: false },
+    ];
+    for (const { label, user, expected } of profiles) {
+        const view = await mountView('views/transfers/Index.vue', '/transfers', {
+            async get(endpoint) {
+                if (endpoint === 'catalog/transfers/options') return { data: { data: { branches: [{ id: 2, name: 'Source' }, { id: 3, name: 'Destination' }], products: [] } } };
+                return list([{ id: 7, transfer_no: 'APPROVED-TRANSFER', status: 'approved', from_branch_id: 2, to_branch_id: 3 }]);
+            },
+        }, user);
+        try {
+            await settle();
+            const ship = [...view.root.querySelectorAll('tbody button')].find((button) => button.textContent === 'Ուղարկել');
+            assert.equal(Boolean(ship), expected, label);
+            if (user.permissions['transfers.create']) {
+                view.root.querySelector('.page-heading .primary-button').click(); await settle();
+                const source = view.root.querySelector('.transfer-modal select');
+                assert.equal(source.disabled, true, 'a branch-scoped administrator cannot change the source warehouse');
+                assert.equal(source.value, '3');
+            }
+        } finally { view.unmount(); }
+    }
+});
+
+test('independent inventory approval excludes the current starter and still requires approval permission', async () => {
+    const records = [
+        { id: 1, inventory_no: 'OWN-COUNTED', status: 'counted', started_by: '7', lines_count: 1, counted_lines_count: 1 },
+        { id: 2, inventory_no: 'PEER-COUNTED', status: 'counted', started_by: 8, lines_count: 1, counted_lines_count: 1 },
+        { id: 3, inventory_no: 'EMPTY-COUNTED', status: 'counted', started_by: 8, lines_count: 0, counted_lines_count: 0 },
+        { id: 4, inventory_no: 'PEER-OPEN', status: 'open', started_by: 8, lines_count: 1, counted_lines_count: 0 },
+    ];
+    for (const allowed of [true, false]) {
+        const view = await mountView('views/inventory/Index.vue', '/inventory', { async get() { return list(records); } }, {
+            id: 7, role: { name: allowed ? 'admin' : 'viewer' }, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': allowed },
+        });
+        try {
+            await settle();
+            const rows = [...view.root.querySelectorAll('tbody tr')];
+            for (const row of rows) {
+                const approve = [...row.querySelectorAll('button')].find((button) => button.textContent === 'Անկախ հաստատել');
+                assert.equal(Boolean(approve), allowed && row.textContent.includes('PEER-COUNTED'), row.textContent);
+            }
+            if (allowed) {
+                view.root.querySelector('tbody .primary-button').click(); await settle();
+                assert.match(view.root.querySelector('.confirm-card').textContent, /PEER-COUNTED/);
+            }
+        } finally { view.unmount(); }
+    }
+});
+
+test('transfer exports respect export permission and submit the visible search and filters', async () => {
+    const originalClick = dom.window.HTMLAnchorElement.prototype.click;
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const downloads = [];
+    const exports = [];
+    dom.window.HTMLAnchorElement.prototype.click = function () { downloads.push(this.download); };
+    URL.createObjectURL = () => 'blob:transfer-export';
+    URL.revokeObjectURL = () => {};
+    try {
+        for (const permitted of [false, true]) {
+            const user = { permissions: { 'transfers.view': true, 'transfers.export': permitted } };
+            const api = {
+                async get(endpoint, options) {
+                    if (endpoint.endsWith('/export')) {
+                        exports.push({ endpoint, params: structuredClone(options.params) });
+                        return { data: new Blob(['transfer_no\nEXPORTED-TRANSFER'], { type: 'text/csv' }) };
+                    }
+                    return list([{ id: 7, transfer_no: 'EXPORTED-TRANSFER', status: 'completed' }]);
+                },
+            };
+            const ExportActions = component('components/ExportActions.vue', {
+                '@/services/api': api, '@/router': { currentUser: () => user }, '@/components/AppIcon.vue': stub,
+            });
+            const view = await mountView('views/transfers/Index.vue', '/transfers', api, user, {
+                '@/components/ExportActions.vue': ExportActions, '@/components/ListFilterBar.vue': liveFilters,
+            });
+            try {
+                await settle();
+                assert.equal(Boolean(view.root.querySelector('.export-actions')), permitted);
+                if (!permitted) continue;
+                change(view.root.querySelector('.search-input input'), 'EXPORTED'); await Vue.nextTick();
+                view.root.querySelector('.test-apply-filter').click(); await settle();
+                view.root.querySelector('.export-actions button').click(); await settle();
+                assert.equal(exports.length, 1);
+                assert.equal(exports[0].endpoint, 'pages/transfers/export');
+                assert.equal(exports[0].params.search, 'EXPORTED');
+                assert.equal(exports[0].params.from, '2026-01-01');
+                assert.equal(exports[0].params.format, 'csv');
+                assert.deepEqual(downloads, ['diagen-transfers.csv']);
+            } finally { view.unmount(); }
+        }
+    } finally {
+        dom.window.HTMLAnchorElement.prototype.click = originalClick;
+        URL.createObjectURL = originalCreate;
+        URL.revokeObjectURL = originalRevoke;
+    }
+});

@@ -321,6 +321,27 @@ class StockRequestWorkflowApiTest extends TestCase
         $this->actingAs($viewer, 'sanctum')->getJson('/api/requests/suggestions?branch_id='.$branch->id)->assertForbidden();
     }
 
+    public function test_request_details_and_dispatch_document_reject_another_branch_even_with_view_permission(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $otherBranch = Branch::query()->create(['name' => 'Gyumri', 'code' => 'GYUM', 'active' => true]);
+        $owner = $this->user($branch, 'request_owner', 10, ['requests.view']);
+        $otherViewer = $this->user($otherBranch, 'request_viewer', 20, ['requests.view']);
+        $request = StockRequest::query()->create([
+            'request_no' => 'PRIVATE-BRANCH-REQUEST', 'branch_id' => $branch->id, 'requested_by' => $owner->id,
+            'status' => 'shipped', 'urgency' => 'normal', 'reason' => 'Branch-only details', 'created_at' => now(),
+        ]);
+
+        $this->actingAs($owner, 'sanctum');
+        $this->getJson("/api/requests/{$request->id}")->assertOk();
+        $this->getJson("/api/requests/{$request->id}/dispatch-document")->assertOk();
+
+        $this->actingAs($otherViewer, 'sanctum');
+        $this->getJson("/api/requests/{$request->id}")->assertForbidden();
+        $this->getJson("/api/requests/{$request->id}/dispatch-document")->assertForbidden();
+        self::assertSame('shipped', $request->fresh()->status);
+    }
+
     public function test_branch_scoped_admin_cannot_manage_requests_from_another_branch(): void
     {
         $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);

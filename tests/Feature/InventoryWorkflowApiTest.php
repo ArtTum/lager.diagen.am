@@ -12,6 +12,7 @@ use App\Models\Role;
 use App\Models\StockLot;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -28,7 +29,7 @@ class InventoryWorkflowApiTest extends TestCase
     {
         foreach ([
             'audit_logs', 'movements', 'inventory_lines', 'inventory_sessions', 'stock_lots', 'products',
-            'role_permissions', 'permissions', 'users', 'roles', 'branches',
+            'suppliers', 'role_permissions', 'permissions', 'users', 'roles', 'branches',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -175,6 +176,49 @@ class InventoryWorkflowApiTest extends TestCase
         self::assertSame(0, Movement::query()->count());
     }
 
+    public function test_inventory_detail_count_and_printable_act_reject_another_branch_with_matching_permissions(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $otherBranch = Branch::query()->create(['name' => 'Gyumri', 'code' => 'GYUM', 'active' => true]);
+        $owner = $this->user($branch, 'inventory_owner', 10, ['inventory.view', 'inventory.edit']);
+        $otherViewer = $this->user($otherBranch, 'inventory_viewer', 20, ['inventory.view', 'inventory.edit']);
+        $product = Product::query()->create([
+            'code' => 'PRIVATE-INVENTORY', 'name' => 'Branch inventory item', 'unit' => 'հատ',
+            'purchase_price' => 35, 'active' => true,
+        ]);
+        $session = InventorySession::query()->create([
+            'inventory_no' => 'PRIVATE-OPEN', 'location_id' => $branch->id,
+            'status' => 'open', 'started_by' => $owner->id, 'started_at' => now(),
+        ]);
+        $line = InventoryLine::query()->create([
+            'session_id' => $session->id, 'product_id' => $product->id,
+            'lot_id' => null, 'expected_qty' => 0, 'counted_unit_cost' => 35,
+        ]);
+        $closed = InventorySession::query()->create([
+            'inventory_no' => 'PRIVATE-CLOSED', 'location_id' => $branch->id,
+            'status' => 'closed', 'started_by' => $owner->id, 'started_at' => now(), 'closed_at' => now(),
+        ]);
+
+        $this->actingAs($owner, 'sanctum');
+        $this->getJson("/api/inventory/{$session->id}")->assertOk()
+            ->assertJsonMissingPath('data.session.lines.0.counted_unit_cost')
+            ->assertJsonMissingPath('data.session.lines.0.product.purchase_price');
+        $this->getJson("/api/inventory/{$closed->id}/act")->assertOk();
+
+        $this->actingAs($otherViewer, 'sanctum');
+        $this->getJson("/api/inventory/{$session->id}")->assertForbidden();
+        $this->putJson("/api/inventory/{$session->id}/count", [
+            'counts' => [$line->id => ['counted_qty' => 0]],
+        ])->assertForbidden();
+        $this->getJson("/api/inventory/{$closed->id}/act")->assertForbidden();
+        $this->getJson("/api/inventory/{$closed->id}/act/pdf")->assertForbidden();
+
+        self::assertSame('open', $session->fresh()->status);
+        self::assertNull($line->fresh()->counted_qty);
+        self::assertSame(0, Movement::query()->count());
+        self::assertSame(0, DB::table('audit_logs')->count());
+    }
+
     private function prepareInventory(?string $expiry, float $quantity): array
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
@@ -255,6 +299,11 @@ class InventoryWorkflowApiTest extends TestCase
             $table->decimal('purchase_price', 14, 2)->default(0);
             $table->boolean('lot_control')->default(false);
             $table->boolean('expiry_control')->default(false);
+            $table->boolean('active')->default(true);
+        });
+        Schema::create('suppliers', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
             $table->boolean('active')->default(true);
         });
         Schema::create('stock_lots', function (Blueprint $table): void {

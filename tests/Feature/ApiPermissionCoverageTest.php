@@ -2,12 +2,47 @@
 
 namespace Tests\Feature;
 
+use App\Models\Permission;
+use App\Models\Role;
+use App\Models\User;
 use App\Support\PermissionCatalog;
 use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
 
 class ApiPermissionCoverageTest extends TestCase
 {
+    public function test_view_only_actor_cannot_call_any_business_write_route(): void
+    {
+        $role = new Role(['name' => 'viewer']);
+        $role->setRelation('permissions', collect(PermissionCatalog::codes())
+            ->filter(static fn (string $code): bool => str_ends_with($code, '.view'))
+            ->map(static fn (string $code): Permission => new Permission(['code' => $code])));
+        $actor = new User(['active' => true]);
+        $actor->setAttribute('id', 999);
+        $actor->setRelation('role', $role);
+        $actor->setRelation('branch', null);
+        $this->actingAs($actor, 'sanctum');
+        $checked = 0;
+
+        foreach (Route::getRoutes()->getRoutes() as $route) {
+            $uri = $route->uri();
+            if (! str_starts_with($uri, 'api/')
+                || str_starts_with($uri, 'api/auth/')
+                || in_array($uri, ['api/broadcasting/auth', 'api/notifications/read'], true)) {
+                continue;
+            }
+            $path = '/'.preg_replace_callback('/\{([^}]+)\}/', static fn (array $match): string => $match[1] === 'action' ? 'cancel' : '1', $uri);
+            foreach (array_intersect($route->methods(), ['POST', 'PUT', 'PATCH', 'DELETE']) as $method) {
+                // Denial must precede validation and any attempt to load or
+                // mutate records, even when the actor can view every module.
+                $this->json($method, $path)->assertForbidden();
+                $checked++;
+            }
+        }
+
+        self::assertGreaterThan(0, $checked);
+    }
+
     public function test_every_api_route_uses_the_permission_for_its_module_and_action(): void
     {
         $apiRoutes = collect(Route::getRoutes()->getRoutes())

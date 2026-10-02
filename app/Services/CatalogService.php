@@ -27,7 +27,9 @@ class CatalogService
             $options['suppliers'] = collect();
         }
         $location = (int) $actor->currentLocationId();
-        if ($location > 0 && isset($options['branches'])) {
+        // Transfers need other active warehouses as destinations. The create
+        // workflow separately verifies the actor owns the sending warehouse.
+        if ($location > 0 && $kind !== 'transfers' && isset($options['branches'])) {
             $options['branches'] = $options['branches']->where('id', $location)->values();
         }
         if ($kind === 'users') {
