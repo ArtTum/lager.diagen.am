@@ -33,7 +33,7 @@ class NotificationService
             foreach ($this->notifications->expiringLots($location) as $row) {
                 $days = now()->startOfDay()->diffInDays($row->expires_on, false);
                 $label = $days < 0 ? 'Ժամկետանց ապրանք' : ($days <= 7 ? 'Պիտանելիության ժամկետին մնացել է մինչև 7 օր' : ($days <= 30 ? 'Պիտանելիության ժամկետին մնացել է մինչև 30 օր' : ($days <= 60 ? 'Պիտանելիության ժամկետին մնացել է մինչև 60 օր' : ($days <= 90 ? 'Պիտանելիության ժամկետին մնացել է մինչև 90 օր' : 'Պիտանելիության ժամկետին մնացել է մինչև 180 օր'))));
-                $add($label, "{$row->code} · {$row->name} · LOT {$row->lot_no} · ".($row->branch_name ?? 'Կենտրոնական պահեստ')." · {$row->qty} հատ", '/expiry', $days < 0 ? 'red' : ($days <= 30 ? 'amber' : 'blue'));
+                $add($label, "{$row->code} · {$row->name} · LOT {$row->lot_no} · ".($row->branch_name ?? 'Կենտրոնական պահեստ')." · {$row->qty} {$row->unit}", '/expiry', $days < 0 ? 'red' : ($days <= 30 ? 'amber' : 'blue'));
             }
         }
         if ($actor->hasPermissionCode('requests.view') && ($location > 0 || $actor->hasPermissionCode('requests.approve'))) {

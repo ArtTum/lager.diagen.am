@@ -7,6 +7,7 @@ use App\Models\Permission;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\StockLot;
+use App\Models\Transfer;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -22,7 +23,7 @@ class NotificationApiScopeTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['user_notification_reads', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
+        foreach (['user_notification_reads', 'transfers', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -69,6 +70,65 @@ class NotificationApiScopeTest extends TestCase
         self::assertDatabaseMissing('user_notification_reads', ['user_id' => $gyumriReader->id, 'notice_key' => $noticeKey]);
     }
 
+    public function test_expiry_notification_uses_the_products_measurement_unit(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'REA-310', 'name' => 'Liquid reagent', 'unit' => 'լիտր', 'active' => true,
+            'expiry_control' => true, 'min_qty' => 0, 'max_qty' => 0,
+        ]);
+        StockLot::query()->create([
+            'product_id' => $product->id, 'location_id' => $branch->id,
+            'lot_no' => 'LIQUID-LOT', 'received_on' => now()->toDateString(),
+            'expires_on' => now()->addDays(30)->toDateString(), 'qty' => 15,
+        ]);
+        $actor = $this->user($branch, 'expiry-reader@example.test');
+        $permission = Permission::query()->create(['code' => 'expiry.view', 'title' => 'View expiry', 'module' => 'expiry']);
+        $actor->role->permissions()->attach($permission);
+
+        $this->actingAs($actor, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.detail', 'REA-310 · Liquid reagent · LOT LIQUID-LOT · Erebuni · 15.000 լիտր')
+            ->assertJsonPath('data.0.link', '/expiry');
+    }
+
+    public function test_central_incoming_transfer_notifications_use_the_central_branch_id_and_keep_receiver_scope(): void
+    {
+        $source = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $other = Branch::query()->create(['name' => 'Gyumri', 'code' => 'GYUM', 'active' => true]);
+        foreach ([
+            ['CENTRAL-INCOMING', $central->id, 'shipped'],
+            ['BRANCH-INCOMING', $other->id, 'shipped'],
+            ['CENTRAL-PENDING', $central->id, 'pending'],
+            ['CENTRAL-COMPLETED', $central->id, 'completed'],
+        ] as [$number, $destination, $status]) {
+            Transfer::query()->create([
+                'transfer_no' => $number, 'from_branch' => $source->id, 'to_branch' => $destination, 'status' => $status,
+            ]);
+        }
+        $centralActor = $this->user($central, 'central-receiver@example.test', ['notifications.view', 'transfers.view'], 'receiver');
+        self::assertSame(0, $centralActor->currentLocationId());
+        self::assertNotSame(0, (int) $centralActor->branch_id);
+
+        $this->actingAs($centralActor, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.detail', 'CENTRAL-INCOMING · ուղարկել է Erebuni')
+            ->assertJsonPath('data.0.link', '/transfers')
+            ->assertJsonPath('unread_count', 1);
+
+        $branchActor = $this->user($other, 'branch-receiver@example.test', ['notifications.view', 'transfers.view'], 'receiver');
+        $branchFeed = $this->actingAs($branchActor, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.detail', 'BRANCH-INCOMING · ուղարկել է Erebuni');
+        $this->actingAs($centralActor, 'sanctum')->postJson('/api/notifications/read', ['key' => $branchFeed->json('data.0.key')])
+            ->assertUnprocessable()->assertJsonValidationErrors('key');
+
+        $centralViewer = $this->user($central, 'central-viewer@example.test', ['notifications.view'], 'viewer');
+        $this->actingAs($centralViewer, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonCount(0, 'data')->assertJsonPath('unread_count', 0);
+    }
+
     private function product(string $code, string $name): Product
     {
         return Product::query()->create([
@@ -85,10 +145,10 @@ class NotificationApiScopeTest extends TestCase
         ]);
     }
 
-    private function user(Branch $branch, string $email): User
+    private function user(Branch $branch, string $email, array $permissionCodes = ['notifications.view', 'stock.view'], string $roleName = 'branch'): User
     {
-        $role = Role::query()->firstOrCreate(['name' => 'branch'], ['title' => 'Մասնաճյուղի պատասխանատու']);
-        foreach (['notifications.view', 'stock.view'] as $code) {
+        $role = Role::query()->firstOrCreate(['name' => $roleName], ['title' => 'Մասնաճյուղի պատասխանատու']);
+        foreach ($permissionCodes as $code) {
             $permission = Permission::query()->firstOrCreate(
                 ['code' => $code],
                 ['title' => $code, 'module' => explode('.', $code)[0]],
@@ -155,6 +215,7 @@ class NotificationApiScopeTest extends TestCase
             $table->unsignedBigInteger('location_id');
             $table->string('lot_no');
             $table->date('received_on');
+            $table->date('expires_on')->nullable();
             $table->decimal('qty', 12, 3);
         });
         Schema::create('user_notification_reads', function (Blueprint $table): void {
@@ -162,6 +223,13 @@ class NotificationApiScopeTest extends TestCase
             $table->char('notice_key', 40);
             $table->timestamp('read_at');
             $table->primary(['user_id', 'notice_key']);
+        });
+        Schema::create('transfers', function (Blueprint $table): void {
+            $table->id();
+            $table->string('transfer_no');
+            $table->unsignedBigInteger('from_branch');
+            $table->unsignedBigInteger('to_branch');
+            $table->string('status');
         });
     }
 }

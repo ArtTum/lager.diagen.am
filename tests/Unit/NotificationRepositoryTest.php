@@ -29,6 +29,7 @@ class NotificationRepositoryTest extends TestCase
             $table->unsignedBigInteger('id')->primary();
             $table->string('code');
             $table->string('name');
+            $table->string('unit')->default('հատ');
             $table->boolean('expiry_control')->default(false);
             $table->boolean('active')->default(true);
             $table->decimal('min_qty', 12, 3)->default(0);

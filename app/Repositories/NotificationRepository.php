@@ -31,7 +31,7 @@ class NotificationRepository
             ->where('p.expiry_control', true)->where('stock_lots.qty', '>', 0)->whereNotNull('stock_lots.expires_on')
             ->whereDate('stock_lots.expires_on', '<=', now()->addDays(180)->toDateString())
             ->when($location > 0, fn ($query) => $query->where('stock_lots.location_id', $location))
-            ->select('stock_lots.id', 'stock_lots.lot_no', 'stock_lots.qty', 'stock_lots.expires_on', 'p.code', 'p.name')
+            ->select('stock_lots.id', 'stock_lots.lot_no', 'stock_lots.qty', 'stock_lots.expires_on', 'p.code', 'p.name', 'p.unit')
             ->selectRaw("CASE WHEN stock_lots.location_id = 0 THEN 'Կենտրոնական պահեստ' ELSE COALESCE(b.name, 'Անհայտ պահեստ') END as branch_name")
             ->orderBy('stock_lots.expires_on')->limit(150)->get();
     }
@@ -101,12 +101,17 @@ class NotificationRepository
 
     public function incomingTransfers(int $location): Collection
     {
-        if ($location < 1) {
+        if ($location < 0) {
             return collect();
         }
 
         return Transfer::query()->join('branches as b', 'b.id', '=', 'transfers.from_branch')
-            ->where('transfers.status', 'shipped')->where('transfers.to_branch', $location)
+            ->join('branches as destination', 'destination.id', '=', 'transfers.to_branch')
+            ->where('transfers.status', 'shipped')
+            ->when($location === 0,
+                fn ($query) => $query->where('destination.code', 'CENTRAL'),
+                fn ($query) => $query->where('transfers.to_branch', $location),
+            )
             ->select('transfers.transfer_no', 'b.name as from_name')->orderByDesc('transfers.id')->limit(50)->get();
     }
 

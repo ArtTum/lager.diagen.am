@@ -8,6 +8,8 @@ import { JSDOM } from 'jsdom';
 import { userContextChanged } from '../../resources/js/router/access.js';
 import * as dateUtils from '../../resources/js/dateUtils.js';
 import { canCreateRecord } from '../../resources/js/permissions.js';
+import * as notifications from '../../resources/js/notifications.js';
+import * as notificationAudio from '../../resources/js/notificationAudio.js';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://lager.test/' });
 for (const key of ['window', 'document', 'history', 'HTMLElement', 'SVGElement', 'Element', 'Node', 'CustomEvent', 'localStorage']) {
@@ -234,4 +236,181 @@ test('a product deactivation confirmation cannot survive navigation into branch 
         assert.match(view.root.textContent, /Branch record/);
         assert.doesNotMatch(view.root.textContent, /Product record/);
     } finally { view.unmount(); }
+});
+
+function notificationEnvironment(sound = 'on') {
+    const previousSound = localStorage.getItem('lagerNotificationSound');
+    const previousContext = window.AudioContext;
+    const previousSetInterval = window.setInterval;
+    const previousClearInterval = window.clearInterval;
+    const intervals = new Map();
+    const audio = { started: 0, resumed: 0, closed: 0, frequencies: [] };
+    let nextInterval = 0;
+    localStorage.setItem('lagerNotificationSound', sound);
+    window.setInterval = (callback, delay) => {
+        intervals.set(++nextInterval, { callback, delay });
+        return nextInterval;
+    };
+    window.clearInterval = (id) => intervals.delete(id);
+    window.AudioContext = class {
+        state = 'suspended';
+        currentTime = 0;
+        destination = {};
+        async resume() { this.state = 'running'; audio.resumed += 1; }
+        async close() { this.state = 'closed'; audio.closed += 1; }
+        createOscillator() {
+            return {
+                frequency: { set value(value) { audio.frequencies.push(value); } },
+                connect() {},
+                start() { audio.started += 1; },
+                stop() {},
+            };
+        }
+        createGain() {
+            return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} };
+        }
+    };
+    return {
+        audio, intervals,
+        poll() {
+            assert.equal(intervals.size, 1);
+            const { callback, delay } = intervals.values().next().value;
+            assert.equal(delay, 45000);
+            return callback();
+        },
+        restore() {
+            window.AudioContext = previousContext;
+            window.setInterval = previousSetInterval;
+            window.clearInterval = previousClearInterval;
+            if (previousSound === null) localStorage.removeItem('lagerNotificationSound');
+            else localStorage.setItem('lagerNotificationSound', previousSound);
+        },
+    };
+}
+
+function notificationResponse(items) {
+    return { data: { data: structuredClone(items), unread_count: items.filter((item) => !item.read).length } };
+}
+
+function notificationItem(key, read = false) {
+    return { key, read, title: key, detail: 'Notification detail', tone: 'blue', link: '/notifications' };
+}
+
+async function mountNotificationBell(api) {
+    const Bell = component('components/NotificationBell.vue', {
+        '@/services/api': api,
+        '@/router': { currentUser: () => ({ id: 1, permissions: { 'notifications.view': true } }) },
+        '@/notifications': notifications,
+        '@/notificationAudio': notificationAudio,
+    });
+    const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
+        { path: '/notifications', component: stub },
+    ] });
+    await router.push('/notifications');
+    return mount(Bell, { router });
+}
+
+test('the notification bell sounds once for new unread poll results and stays silent for existing or read items', async () => {
+    const environment = notificationEnvironment();
+    let feed = [notificationItem('existing'), notificationItem('already-read', true)];
+    const view = await mountNotificationBell({
+        async get(endpoint) { assert.equal(endpoint, 'notifications'); return notificationResponse(feed); },
+    });
+    try {
+        await settle();
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '1');
+        assert.equal(environment.audio.started, 0, 'the initial feed must not play a notification tone');
+        view.root.querySelector('.notification-bell-trigger').click();
+        await settle();
+        assert.equal(environment.audio.started, 0, 'opening the bell activates audio without sounding');
+        feed.push(notificationItem('new-read', true));
+        await environment.poll();
+        await settle();
+        assert.equal(environment.audio.started, 0, 'new read items must not sound');
+        feed.push(notificationItem('new-unread-one'), notificationItem('new-unread-two'));
+        await environment.poll();
+        await settle();
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '3');
+        assert.match(view.root.textContent, /new-unread-one/);
+        assert.equal(environment.audio.started, 1, 'a poll with multiple new unread items plays one tone');
+        assert.deepEqual(environment.audio.frequencies, [740]);
+        await environment.poll();
+        await settle();
+        assert.equal(environment.audio.started, 1, 'the same unread feed must not repeat its tone');
+        feed.find((item) => item.key === 'new-unread-one').read = true;
+        await environment.poll();
+        await settle();
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '2');
+        assert.equal(environment.audio.started, 1, 'marking an item read must not sound');
+        window.dispatchEvent(new CustomEvent('lager:notification-sound', { detail: false }));
+        feed.push(notificationItem('new-but-muted'));
+        await environment.poll();
+        await settle();
+        assert.equal(environment.audio.started, 1, 'disabled sound suppresses new unread tones');
+    } finally { view.unmount(); environment.restore(); }
+    assert.equal(environment.intervals.size, 0);
+    assert.equal(environment.audio.closed, 1);
+});
+
+test('enabling sound from the notification bell plays a preview and persists the preference', async () => {
+    const environment = notificationEnvironment('off');
+    const view = await mountNotificationBell({ async get() { return notificationResponse([]); } });
+    try {
+        await settle();
+        view.root.querySelector('.notification-bell-trigger').click();
+        await settle();
+        const soundToggle = view.root.querySelector('.sound-mini-toggle');
+        assert.equal(soundToggle.getAttribute('aria-pressed'), 'false');
+        soundToggle.click();
+        await settle();
+        assert.equal(localStorage.getItem('lagerNotificationSound'), 'on');
+        assert.equal(soundToggle.getAttribute('aria-pressed'), 'true');
+        assert.equal(environment.audio.resumed, 1);
+        assert.equal(environment.audio.started, 1);
+        assert.deepEqual(environment.audio.frequencies, [740]);
+        soundToggle.click();
+        await settle();
+        assert.equal(localStorage.getItem('lagerNotificationSound'), 'off');
+        assert.equal(soundToggle.getAttribute('aria-pressed'), 'false');
+        assert.equal(environment.audio.started, 1, 'disabling sound does not play another preview');
+    } finally { view.unmount(); environment.restore(); }
+});
+
+test('a session change discards the old notification poll and establishes a silent new-user feed', async () => {
+    const environment = notificationEnvironment();
+    const pending = [];
+    const view = await mountNotificationBell({
+        get(endpoint) {
+            assert.equal(endpoint, 'notifications');
+            const request = deferred();
+            pending.push(request);
+            return request.promise;
+        },
+    });
+    try {
+        pending[0].resolve(notificationResponse([notificationItem('old-user-initial')]));
+        await settle();
+        view.root.querySelector('.notification-bell-trigger').click();
+        await settle();
+        const oldPoll = environment.poll();
+        assert.equal(pending.length, 2);
+        window.dispatchEvent(new CustomEvent('lager:user', {
+            detail: { id: 2, permissions: { 'notifications.view': true } },
+        }));
+        await settle();
+        assert.equal(pending.length, 3);
+        assert.equal(view.root.querySelector('.notification-badge'), null);
+        assert.doesNotMatch(view.root.textContent, /old-user-initial/);
+        pending[1].resolve(notificationResponse([notificationItem('late-old-user-alert')]));
+        await oldPoll;
+        await settle();
+        assert.equal(view.root.querySelector('.notification-badge'), null);
+        assert.doesNotMatch(view.root.textContent, /late-old-user-alert/);
+        assert.equal(environment.audio.started, 0);
+        pending[2].resolve(notificationResponse([notificationItem('new-user-initial')]));
+        await settle();
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '1');
+        assert.match(view.root.textContent, /new-user-initial/);
+        assert.equal(environment.audio.started, 0, 'the new user feed is a silent initial snapshot');
+    } finally { view.unmount(); environment.restore(); }
 });
