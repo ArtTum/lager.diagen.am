@@ -43,6 +43,7 @@ class TransferService
     public function approve(int $id, User $actor, string $ip): string
     {
         abort_unless($actor->currentLocationId() === 0, 403, 'Տեղափոխումները հաստատվում են կենտրոնական պահեստում։');
+
         return DB::transaction(function () use ($id, $actor, $ip): string {
             $transfer = $this->transfers->lock($id);
             abort_unless($transfer && in_array($transfer->status, ['pending', 'stock_shortage'], true), 409, 'Տեղափոխումը հաստատման կամ պաշարի համալրման սպասման կարգավիճակում չէ։');
@@ -130,7 +131,8 @@ class TransferService
             foreach ($sent as $line) {
                 $source = $this->transfers->lot((int) $line->lot_id);
                 abort_unless($source, 409, 'Սկզբնական LOT-ը չի գտնվել։');
-                $destination = $this->transfers->matchingLot((int) $line->product_id, $toLocation, (string) $source->lot_no, $source->expires_on?->format('Y-m-d'));
+                $destination = $this->transfers->matchingLot((int) $line->product_id, $toLocation, (string) $source->lot_no, $source->expires_on?->format('Y-m-d'),
+                    $source->supplier_id === null ? null : (int) $source->supplier_id, (float) $line->unit_cost);
                 if ($destination) {
                     $this->transfers->increaseLot((int) $destination->id, (float) $line->qty);
                     $destinationLotId = (int) $destination->id;

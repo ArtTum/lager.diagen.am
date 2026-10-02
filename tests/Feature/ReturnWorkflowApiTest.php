@@ -13,6 +13,7 @@ use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ReturnWorkflowApiTest extends TestCase
@@ -124,6 +125,43 @@ class ReturnWorkflowApiTest extends TestCase
         self::assertEquals(90.0, (float) $otherLot->fresh()->qty);
         self::assertSame(1, ProductReturn::query()->count());
         self::assertSame('return_supplier', Movement::query()->sole()->type);
+    }
+
+    #[DataProvider('conflictingLotProvenance')]
+    public function test_branch_return_preserves_supplier_and_unit_cost_of_same_numbered_lots(?int $sourceSupplier, ?int $destinationSupplier, float $sourceCost, float $destinationCost): void
+    {
+        Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'RETURN-PROVENANCE', 'name' => 'Same numbered batches', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $attributes = ['product_id' => $product->id, 'lot_no' => 'SHARED-LOT', 'expires_on' => null, 'received_on' => now()->toDateString()];
+        $sourceLot = StockLot::query()->create([...$attributes, 'location_id' => $branch->id, 'supplier_id' => $sourceSupplier, 'unit_cost' => $sourceCost, 'qty' => 2]);
+        $centralLot = StockLot::query()->create([...$attributes, 'location_id' => 0, 'supplier_id' => $destinationSupplier, 'unit_cost' => $destinationCost, 'qty' => 5]);
+
+        $this->actingAs($this->branchUser($branch, 10), 'sanctum')->postJson('/api/returns', [
+            'direction' => 'branch_to_central', 'reason' => 'Return branch surplus',
+            'items' => [['product_id' => $product->id, 'qty' => 2]],
+        ])->assertCreated();
+
+        self::assertEquals(0.0, (float) $sourceLot->fresh()->qty);
+        self::assertEquals(5.0, (float) $centralLot->fresh()->qty);
+        $receivedLot = StockLot::query()->where('location_id', 0)->where('id', '<>', $centralLot->id)->sole();
+        self::assertSame($sourceSupplier, $receivedLot->supplier_id);
+        self::assertSame(number_format($sourceCost, 2, '.', ''), $receivedLot->unit_cost);
+        self::assertEquals(2.0, (float) $receivedLot->qty);
+        self::assertSame($receivedLot->id, Movement::query()->sole()->lot_id);
+    }
+
+    public static function conflictingLotProvenance(): array
+    {
+        return [
+            'different suppliers' => [11, 22, 100.0, 100.0],
+            'source supplier absent' => [null, 22, 100.0, 100.0],
+            'destination supplier absent' => [11, null, 100.0, 100.0],
+            'different costs' => [11, 11, 100.01, 100.02],
+        ];
     }
 
     private function centralUser(Branch $branch, int $id): User

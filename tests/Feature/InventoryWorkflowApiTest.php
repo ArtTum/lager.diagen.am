@@ -103,6 +103,77 @@ class InventoryWorkflowApiTest extends TestCase
         self::assertDatabaseHas('audit_logs', ['entity' => 'inventory_sessions', 'entity_id' => $sessionId, 'action' => 'Գույքագրումը հաստատվեց և փակվեց']);
     }
 
+    public function test_inventory_can_reduce_an_expired_lot_without_creating_new_expired_stock(): void
+    {
+        [$sessionId, $line, $lot, $approver] = $this->prepareInventory(now()->subDay()->toDateString(), 5);
+        $this->putJson("/api/inventory/{$sessionId}/count", [
+            'counts' => [$line->id => ['counted_qty' => 4, 'reason' => 'One expired item is missing']],
+        ])->assertOk();
+
+        $this->actingAs($approver, 'sanctum')->postJson("/api/inventory/{$sessionId}/approve")
+            ->assertOk()->assertJsonPath('data.status', 'closed');
+
+        self::assertEquals(4.0, (float) $lot->fresh()->qty);
+        self::assertEquals(1.0, (float) Movement::query()->sole()->qty);
+        self::assertSame(0, (int) Movement::query()->sole()->from_location);
+        self::assertNull(Movement::query()->sole()->to_location);
+    }
+
+    public function test_inventory_cannot_increase_an_expired_lot(): void
+    {
+        [$sessionId, $line, $lot, $approver] = $this->prepareInventory(now()->subDay()->toDateString(), 5);
+        $this->putJson("/api/inventory/{$sessionId}/count", [
+            'counts' => [$line->id => ['counted_qty' => 6, 'reason' => 'Another expired item was found']],
+        ])->assertOk();
+
+        $this->actingAs($approver, 'sanctum')->postJson("/api/inventory/{$sessionId}/approve")
+            ->assertUnprocessable();
+
+        self::assertEquals(5.0, (float) $lot->fresh()->qty);
+        self::assertSame('counted', InventorySession::query()->findOrFail($sessionId)->status);
+        self::assertSame(0, Movement::query()->count());
+    }
+
+    public function test_inventory_rechecks_new_lot_expiry_when_approval_happens_after_counting(): void
+    {
+        $this->freezeTime();
+        [$sessionId, $line, $lot, $approver] = $this->prepareInventory(null, 0);
+        $this->putJson("/api/inventory/{$sessionId}/count", [
+            'counts' => [$line->id => [
+                'counted_qty' => 2, 'reason' => 'Previously unrecorded stock',
+                'lot_no' => 'FOUND-TODAY', 'expires_on' => now()->toDateString(),
+            ]],
+        ])->assertOk();
+        $this->travel(1)->days();
+
+        $this->actingAs($approver, 'sanctum')->postJson("/api/inventory/{$sessionId}/approve")
+            ->assertUnprocessable()->assertJsonValidationErrors('session');
+
+        self::assertSame('counted', InventorySession::query()->findOrFail($sessionId)->status);
+        self::assertSame(0, StockLot::query()->count());
+        self::assertSame(0, Movement::query()->count());
+    }
+
+    private function prepareInventory(?string $expiry, float $quantity): array
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'INV-EXPIRY', 'name' => 'Expiry-controlled item', 'unit' => 'հատ',
+            'purchase_price' => 10, 'lot_control' => true, 'expiry_control' => true, 'active' => true,
+        ]);
+        $lot = $quantity > 0 ? StockLot::query()->create([
+            'product_id' => $product->id, 'location_id' => 0, 'lot_no' => 'EXPIRED-LOT',
+            'expires_on' => $expiry, 'received_on' => now()->subMonths(2)->toDateString(),
+            'unit_cost' => 10, 'qty' => $quantity,
+        ]) : null;
+        $counter = $this->user($central, 'storekeeper', 10, ['inventory.create', 'inventory.edit']);
+        $approver = $this->user($central, 'approver', 20, ['inventory.approve']);
+        $sessionId = (int) $this->actingAs($counter, 'sanctum')->postJson('/api/inventory', ['location_id' => 0])
+            ->assertCreated()->json('data.id');
+
+        return [$sessionId, InventoryLine::query()->where('session_id', $sessionId)->sole(), $lot, $approver];
+    }
+
     private function user(Branch $branch, string $roleName, int $id, array $permissionCodes): User
     {
         $role = Role::query()->create(['name' => $roleName, 'title' => $roleName]);

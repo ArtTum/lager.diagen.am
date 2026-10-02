@@ -1,27 +1,28 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import api from '@/services/api';
-import Login from '@/views/auth/Login.vue';
-import Dashboard from '@/views/dashboard/Index.vue';
-import Suppliers from '@/views/suppliers/Index.vue';
-import PageTable from '@/views/PageTable.vue';
-import CatalogTable from '@/views/CatalogTable.vue';
-import Transfers from '@/views/transfers/Index.vue';
-import Requests from '@/views/requests/Index.vue';
-import Purchasing from '@/views/purchasing/Index.vue';
-import Stock from '@/views/stock/Index.vue';
-import StockMatrix from '@/views/stock/Matrix.vue';
-import ProductLabel from '@/views/products/Label.vue';
-import Inventory from '@/views/inventory/Index.vue';
-import Returns from '@/views/returns/Index.vue';
-import Movements from '@/views/movements/Index.vue';
-import Notifications from '@/views/notifications/Index.vue';
-import Reports from '@/views/reports/Index.vue';
-import Expiry from '@/views/expiry/Index.vue';
-import Audit from '@/views/audit/Index.vue';
-import DispatchDocument from '@/views/requests/DispatchDocument.vue';
-import NoAccess from '@/views/NoAccess.vue';
-import InventoryAct from '@/views/inventory/Act.vue';
 import { firstAvailablePath, userContextChanged } from './access';
+
+const Login = () => import('@/views/auth/Login.vue');
+const Dashboard = () => import('@/views/dashboard/Index.vue');
+const Suppliers = () => import('@/views/suppliers/Index.vue');
+const PageTable = () => import('@/views/PageTable.vue');
+const CatalogTable = () => import('@/views/CatalogTable.vue');
+const Transfers = () => import('@/views/transfers/Index.vue');
+const Requests = () => import('@/views/requests/Index.vue');
+const Purchasing = () => import('@/views/purchasing/Index.vue');
+const Stock = () => import('@/views/stock/Index.vue');
+const StockMatrix = () => import('@/views/stock/Matrix.vue');
+const ProductLabel = () => import('@/views/products/Label.vue');
+const Inventory = () => import('@/views/inventory/Index.vue');
+const Returns = () => import('@/views/returns/Index.vue');
+const Movements = () => import('@/views/movements/Index.vue');
+const Notifications = () => import('@/views/notifications/Index.vue');
+const Reports = () => import('@/views/reports/Index.vue');
+const Expiry = () => import('@/views/expiry/Index.vue');
+const Audit = () => import('@/views/audit/Index.vue');
+const DispatchDocument = () => import('@/views/requests/DispatchDocument.vue');
+const NoAccess = () => import('@/views/NoAccess.vue');
+const InventoryAct = () => import('@/views/inventory/Act.vue');
 
 const routes = [
     { path: '/', redirect: '/dashboard' },

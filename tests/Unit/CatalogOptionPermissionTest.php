@@ -13,6 +13,19 @@ use Tests\TestCase;
 
 class CatalogOptionPermissionTest extends TestCase
 {
+    public function test_registered_branch_options_kind_is_supported(): void
+    {
+        $repository = $this->createMock(CatalogRepository::class);
+        $repository->expects(self::once())->method('options')->with('branches', false, false)->willReturn([
+            'branches' => collect([(object) ['id' => 2, 'name' => 'Erebuni']]),
+        ]);
+
+        $options = (new CatalogService($repository, app(PermissionService::class)))
+            ->options('branches', $this->actor(0, 'CENTRAL', ['branches.view']));
+
+        self::assertSame([2], $options['branches']->pluck('id')->all());
+    }
+
     public function test_branch_operational_options_do_not_disclose_supplier_catalog_without_permission(): void
     {
         $repository = $this->createMock(CatalogRepository::class);

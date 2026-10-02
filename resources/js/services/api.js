@@ -12,7 +12,11 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use((response) => response, (error) => {
-    if (error.response?.status === 401 && localStorage.getItem('lagerAuthToken')) {
+    const token = localStorage.getItem('lagerAuthToken');
+    const authorization = error.config?.headers?.get?.('Authorization') ?? error.config?.headers?.Authorization;
+    // A delayed response from an expired session must not clear a newer login.
+    if (error.response?.status === 401 && token
+        && authorization === `Bearer ${token}`) {
         localStorage.removeItem('lagerAuthToken');
         window.dispatchEvent(new CustomEvent('lager:unauthorized'));
     }

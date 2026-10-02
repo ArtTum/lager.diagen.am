@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\ReportQueryRequest;
-use App\Services\ReportService;
 use App\Services\ReportPdfService;
+use App\Services\ReportService;
 use App\Services\TabularExportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
@@ -30,18 +30,7 @@ class ReportController extends Controller
     {
         $filters = $request->validated();
         $export = $this->reports->export($request->user(), $filters);
-        $columnKeys = $export['column_keys'];
-        $rows = (static function () use ($export, $columnKeys): \Generator {
-            foreach ($export['query']->cursor() as $row) {
-                $values = method_exists($row, 'getAttributes')
-                    ? $row->getAttributes()
-                    : (array) $row;
-                yield array_map(
-                    static fn (string $key): mixed => $values[$key] ?? null,
-                    $columnKeys,
-                );
-            }
-        })();
+        $rows = $export['rows'];
 
         if (($filters['format'] ?? 'csv') === 'pdf') {
             return $this->pdfs->download(

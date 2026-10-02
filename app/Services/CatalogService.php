@@ -19,7 +19,7 @@ class CatalogService
 
     public function options(string $kind, User $actor): array
     {
-        abort_unless(in_array($kind, ['products', 'users', 'roles', 'transfers', 'requests', 'stock'], true), 404);
+        abort_unless(in_array($kind, ['branches', 'products', 'users', 'roles', 'transfers', 'requests', 'stock'], true), 404);
         $canViewPurchases = $actor->hasPermissionCode('purchases.view');
         $canViewSuppliers = $actor->hasPermissionCode('suppliers.view');
         $options = $this->catalog->options($kind, $canViewPurchases, $canViewPurchases || $canViewSuppliers);
@@ -100,6 +100,9 @@ class CatalogService
             if ($kind === 'users' && (int) $record->id === (int) $actor->id && array_key_exists('active', $data) && ! (bool) $data['active']) {
                 throw ValidationException::withMessages(['active' => ['Չեք կարող ապաակտիվացնել ձեր ընթացիկ հաշիվը։']]);
             }
+            if ($record->active && array_key_exists('active', $data) && ! (bool) $data['active']) {
+                $this->assertDeactivationAllowed($actor, $kind, $record);
+            }
             $record = $this->catalog->update($record, $data);
             $this->audit($actor, $ip, 'Փոփոխություն', $kind, $id, $before, $this->safe($kind, $data));
             if ($kind === 'products' && ! $actor->hasPermissionCode('purchases.view')) {
@@ -115,21 +118,7 @@ class CatalogService
         DB::transaction(function () use ($actor, $ip, $kind, $id): void {
             $record = $this->catalog->find($kind, $id);
             $this->assertLocationScope($actor, $kind, $record);
-            if ($kind === 'branches' && (int) $actor->currentLocationId() > 0) {
-                throw ValidationException::withMessages(['id' => ['Չեք կարող ապաակտիվացնել ձեր ընթացիկ մասնաճյուղը։']]);
-            }
-            if ($kind === 'users' && $id === (int) $actor->id) {
-                throw ValidationException::withMessages(['id' => ['Չեք կարող ապաակտիվացնել ձեր ընթացիկ հաշիվը։']]);
-            }
-            if ($kind === 'products' && $this->catalog->stockExistsForProduct($id)) {
-                throw ValidationException::withMessages(['id' => ['Մնացորդ ունեցող ապրանքը հնարավոր չէ ապաակտիվացնել։']]);
-            }
-            if ($kind === 'branches' && $record->code === 'CENTRAL') {
-                throw ValidationException::withMessages(['id' => ['Կենտրոնական պահեստը հնարավոր չէ ապաակտիվացնել։']]);
-            }
-            if ($kind === 'branches' && $this->catalog->stockExistsForLocation($id)) {
-                throw ValidationException::withMessages(['id' => ['Մնացորդ ունեցող պահեստը հնարավոր չէ ապաակտիվացնել։']]);
-            }
+            $this->assertDeactivationAllowed($actor, $kind, $record);
             $before = ['active' => (bool) $record->active];
             $this->catalog->deactivate($record);
             $this->audit($actor, $ip, 'Ապաակտիվացում', $kind, $id, $before, ['active' => false]);
@@ -242,6 +231,25 @@ class CatalogService
     private function assertAssignablePermissions(User $actor, array $permissions, array $existingPermissions = []): void
     {
         $this->permissions->assertAssignable($actor, $permissions, $existingPermissions);
+    }
+
+    private function assertDeactivationAllowed(User $actor, string $kind, Model $record): void
+    {
+        if ($kind === 'branches' && (int) $actor->currentLocationId() > 0) {
+            throw ValidationException::withMessages(['id' => ['Չեք կարող ապաակտիվացնել ձեր ընթացիկ մասնաճյուղը։']]);
+        }
+        if ($kind === 'users' && (int) $record->id === (int) $actor->id) {
+            throw ValidationException::withMessages(['id' => ['Չեք կարող ապաակտիվացնել ձեր ընթացիկ հաշիվը։']]);
+        }
+        if ($kind === 'products' && $this->catalog->stockExistsForProduct((int) $record->id)) {
+            throw ValidationException::withMessages(['id' => ['Մնացորդ ունեցող ապրանքը հնարավոր չէ ապաակտիվացնել։']]);
+        }
+        if ($kind === 'branches' && $record->code === 'CENTRAL') {
+            throw ValidationException::withMessages(['id' => ['Կենտրոնական պահեստը հնարավոր չէ ապաակտիվացնել։']]);
+        }
+        if ($kind === 'branches' && $this->catalog->stockExistsForLocation((int) $record->id)) {
+            throw ValidationException::withMessages(['id' => ['Մնացորդ ունեցող պահեստը հնարավոր չէ ապաակտիվացնել։']]);
+        }
     }
 
     private function assertAssignableRole(User $actor, int $roleId): void

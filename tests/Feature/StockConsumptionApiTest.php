@@ -76,6 +76,29 @@ class StockConsumptionApiTest extends TestCase
         self::assertSame(2, Movement::query()->count());
     }
 
+    public function test_stock_adjustment_rejects_increasing_an_expired_lot_but_allows_reducing_it(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'ADJUST-EXPIRY', 'name' => 'Expired adjustment item', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => true, 'active' => true,
+        ]);
+        $lot = $this->lot($product, (int) $branch->id, 'EXPIRED', 5, now()->subDay()->toDateString());
+        $actor = $this->branchUser($central, 10);
+        $actor->role->permissions->push(new Permission(['code' => 'stock.edit']));
+        $this->actingAs($actor, 'sanctum');
+        $data = ['product_id' => $product->id, 'location_id' => $branch->id, 'lot_id' => $lot->id, 'reason' => 'Physical stock correction'];
+
+        $this->postJson('/api/stock/adjust', [...$data, 'delta_qty' => 1])->assertUnprocessable();
+        self::assertEquals(5.0, (float) $lot->fresh()->qty);
+        self::assertSame(0, Movement::query()->count());
+
+        $this->postJson('/api/stock/adjust', [...$data, 'delta_qty' => -1])->assertOk();
+        self::assertEquals(4.0, (float) $lot->fresh()->qty);
+        self::assertEquals(1.0, (float) Movement::query()->sole()->qty);
+    }
+
     private function lot(Product $product, int $location, string $lotNo, float $quantity, string $expiresOn): StockLot
     {
         return StockLot::query()->create([

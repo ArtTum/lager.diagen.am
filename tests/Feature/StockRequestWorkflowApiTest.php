@@ -14,6 +14,7 @@ use App\Models\StockRequestItem;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class StockRequestWorkflowApiTest extends TestCase
@@ -300,6 +301,48 @@ class StockRequestWorkflowApiTest extends TestCase
             ->assertOk();
 
         self::assertSame('closed', $request->fresh()->status);
+    }
+
+    #[DataProvider('conflictingLotProvenance')]
+    public function test_request_receipt_preserves_supplier_and_unit_cost_of_same_numbered_lots(?int $sourceSupplier, ?int $destinationSupplier, float $sourceCost, float $destinationCost): void
+    {
+        Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'REQUEST-PROVENANCE', 'name' => 'Same numbered batches', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $attributes = ['product_id' => $product->id, 'lot_no' => 'SHARED-LOT', 'expires_on' => null, 'received_on' => now()->toDateString()];
+        $sourceLot = StockLot::query()->create([...$attributes, 'location_id' => 0, 'supplier_id' => $sourceSupplier, 'unit_cost' => $sourceCost, 'qty' => 0]);
+        $branchLot = StockLot::query()->create([...$attributes, 'location_id' => $branch->id, 'supplier_id' => $destinationSupplier, 'unit_cost' => $destinationCost, 'qty' => 5]);
+        $request = StockRequest::query()->create([
+            'request_no' => 'REQUEST-PROVENANCE', 'branch_id' => $branch->id, 'requested_by' => 10, 'status' => 'shipped', 'urgency' => 'normal',
+        ]);
+        Movement::query()->create([
+            'movement_no' => 'SENT-PROVENANCE', 'type' => 'branch_out', 'product_id' => $product->id, 'lot_id' => $sourceLot->id,
+            'from_location' => 0, 'to_location' => $branch->id, 'qty' => 2, 'unit_cost' => $sourceCost,
+            'reference' => $request->request_no, 'reason' => 'Shipment', 'actor_id' => 20, 'happened_at' => now(),
+        ]);
+        $receiver = $this->user($branch, 'receiver', 10, ['requests.edit']);
+
+        $this->actingAs($receiver, 'sanctum')->postJson("/api/requests/{$request->id}/receive")->assertOk();
+
+        self::assertEquals(5.0, (float) $branchLot->fresh()->qty);
+        $receivedLot = StockLot::query()->where('location_id', $branch->id)->where('id', '<>', $branchLot->id)->sole();
+        self::assertSame($sourceSupplier, $receivedLot->supplier_id);
+        self::assertSame(number_format($sourceCost, 2, '.', ''), $receivedLot->unit_cost);
+        self::assertEquals(2.0, (float) $receivedLot->qty);
+        self::assertSame($receivedLot->id, Movement::query()->where('type', 'branch_in')->sole()->lot_id);
+    }
+
+    public static function conflictingLotProvenance(): array
+    {
+        return [
+            'different suppliers' => [11, 22, 100.0, 100.0],
+            'source supplier absent' => [null, 22, 100.0, 100.0],
+            'destination supplier absent' => [11, null, 100.0, 100.0],
+            'different costs' => [11, 11, 100.01, 100.02],
+        ];
     }
 
     private function user(Branch $branch, string $roleName, int $id, array $permissionCodes): User

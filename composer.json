@@ -7,7 +7,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "laravel/framework": "^12.64",
+        "laravel/framework": "^12.69.3",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "mpdf/mpdf": "^8.3.1"

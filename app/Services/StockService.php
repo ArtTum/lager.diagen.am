@@ -54,7 +54,7 @@ class StockService
     {
         $locations = $this->stock->matrixLocations((int) $actor->currentLocationId());
         $locationIds = $locations->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $this->stock->matrixProductsQuery(trim($search))->chunkById(500, function ($products) use ($locations, $locationIds, $writer): void {
+        $this->stock->matrixProductsQuery(trim($search))->reorder()->chunkById(500, function ($products) use ($locations, $locationIds, $writer): void {
             $quantities = $this->stock->matrixQuantities($products->modelKeys(), $locationIds);
             foreach ($products as $product) {
                 $values = [];
@@ -122,6 +122,7 @@ class StockService
                 $lot = $this->stock->lockedLot($lotId, (int) $product->id, $location);
                 abort_unless($lot, 404, 'LOT-ը տվյալ պահեստում չի գտնվել։');
                 $before = (float) $lot->qty;
+                abort_if($delta > 0 && $lot->expires_on && $lot->expires_on->lt(now()->startOfDay()), 422, 'Ժամկետանց LOT-ի դրական մնացորդ ստեղծել չի կարելի։');
                 if ($delta < 0) {
                     if (abs($delta) > $before + 0.00001) {
                         throw ValidationException::withMessages(['delta_qty' => ['Ճշգրտման նվազումը գերազանցում է LOT-ի մնացորդը։']]);

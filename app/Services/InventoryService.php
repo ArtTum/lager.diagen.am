@@ -7,6 +7,7 @@ use App\Models\InventorySession;
 use App\Models\User;
 use App\Repositories\InventoryRepository;
 use App\Repositories\StockRepository;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -40,7 +41,7 @@ class InventoryService
             })()];
     }
 
-    private function applyListFilters(\Illuminate\Database\Eloquent\Builder $query, array $filters): void
+    private function applyListFilters(Builder $query, array $filters): void
     {
         if (filled($filters['status'] ?? null)) {
             $query->where('status', $filters['status']);
@@ -230,6 +231,9 @@ class InventoryService
                     if ($line->product->expiry_control && ! $expiry) {
                         throw ValidationException::withMessages(['session' => ['Նոր LOT-ի պիտանելիության ժամկետը պարտադիր է։']]);
                     }
+                    if ($expiry && $expiry < now()->toDateString()) {
+                        throw ValidationException::withMessages(['session' => ['Նոր LOT-ի պիտանելիության ժամկետն անցած է։']]);
+                    }
                     $lot = $this->inventory->createLot([
                         'product_id' => $line->product_id, 'location_id' => $session->location_id,
                         'lot_no' => $lotNo ?: 'INV-'.$session->inventory_no, 'expires_on' => $expiry,
@@ -244,8 +248,8 @@ class InventoryService
                     continue;
                 }
 
-                abort_if($count > 0 && $lot->expires_on && $lot->expires_on->lt(now()->startOfDay()), 422, 'Ժամկետանց LOT-ի դրական մնացորդ ստեղծել չի կարելի։');
                 $delta = $count - $current;
+                abort_if($delta > 0 && $lot->expires_on && $lot->expires_on->lt(now()->startOfDay()), 422, 'Ժամկետանց LOT-ի դրական մնացորդ ստեղծել չի կարելի։');
                 $lot = $this->inventory->setLotQuantity($lot, $count);
                 $this->stock->movement((int) $actor->id, 'inventory_adjustment', (int) $line->product_id, (int) $lot->id,
                     $delta < 0 ? (int) $session->location_id : null, $delta > 0 ? (int) $session->location_id : null,

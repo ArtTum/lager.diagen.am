@@ -61,9 +61,10 @@ class ReturnRepository
             ->orderByRaw('(expires_on IS NULL), expires_on, received_on, id')->lockForUpdate()->get();
     }
 
-    public function findCentralLot(int $productId, string $lotNo, ?string $expiresOn): ?StockLot
+    public function findCentralLot(int $productId, string $lotNo, ?string $expiresOn, ?int $supplierId, float $unitCost): ?StockLot
     {
         return StockLot::query()->where('product_id', $productId)->where('location_id', 0)->where('lot_no', $lotNo)
+            ->where('supplier_id', $supplierId)->where('unit_cost', number_format($unitCost, 2, '.', ''))
             ->when(
                 $expiresOn === null,
                 fn ($query) => $query->whereNull('expires_on'),

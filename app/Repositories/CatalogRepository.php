@@ -49,7 +49,15 @@ class CatalogRepository
 
     public function update(Model $record, array $data): Model
     {
+        // An empty optional password means "keep the current password". The
+        // HTTP middleware converts the edit form's empty string to null.
+        if ($record instanceof User && ($data['password'] ?? '') === '') {
+            unset($data['password']);
+        }
         $record->fill($data)->save();
+        if ($record instanceof User && ($record->wasChanged('password') || ! $record->active)) {
+            $record->tokens()->delete();
+        }
 
         return $record->refresh();
     }
@@ -57,6 +65,9 @@ class CatalogRepository
     public function deactivate(Model $record): void
     {
         $record->forceFill(['active' => false])->save();
+        if ($record instanceof User) {
+            $record->tokens()->delete();
+        }
     }
 
     public function createCategory(array $data): Category

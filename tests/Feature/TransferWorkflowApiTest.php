@@ -13,6 +13,7 @@ use App\Models\Transfer;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class TransferWorkflowApiTest extends TestCase
@@ -148,12 +149,55 @@ class TransferWorkflowApiTest extends TestCase
 
         $this->actingAs($approver, 'sanctum');
         $this->postJson("/api/transfers/{$transferId}/approve")
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('items');
+            ->assertOk();
 
-        self::assertSame('pending', Transfer::query()->findOrFail($transferId)->status);
+        self::assertSame('stock_shortage', Transfer::query()->findOrFail($transferId)->status);
         self::assertEquals(2.0, (float) $expiredLot->fresh()->qty);
         self::assertSame(0, Movement::query()->count());
+    }
+
+    #[DataProvider('conflictingLotProvenance')]
+    public function test_transfer_receipt_preserves_supplier_and_unit_cost_of_same_numbered_lots(?int $sourceSupplier, ?int $destinationSupplier, float $sourceCost, float $destinationCost): void
+    {
+        Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $source = Branch::query()->create(['name' => 'Source', 'code' => 'SRC', 'active' => true]);
+        $destination = Branch::query()->create(['name' => 'Destination', 'code' => 'DEST', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'XFER-PROVENANCE', 'name' => 'Same numbered batches', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $attributes = ['product_id' => $product->id, 'lot_no' => 'SHARED-LOT', 'expires_on' => null, 'received_on' => now()->toDateString()];
+        $sourceLot = StockLot::query()->create([...$attributes, 'location_id' => $source->id, 'supplier_id' => $sourceSupplier, 'unit_cost' => $sourceCost, 'qty' => 0]);
+        $destinationLot = StockLot::query()->create([...$attributes, 'location_id' => $destination->id, 'supplier_id' => $destinationSupplier, 'unit_cost' => $destinationCost, 'qty' => 5]);
+        $transfer = Transfer::query()->create([
+            'transfer_no' => 'XFER-PROVENANCE', 'from_branch' => $source->id, 'to_branch' => $destination->id,
+            'product_id' => $product->id, 'qty' => 2, 'status' => 'shipped', 'requested_by' => 10,
+        ]);
+        Movement::query()->create([
+            'movement_no' => 'SENT-PROVENANCE', 'type' => 'transfer_sent', 'product_id' => $product->id, 'lot_id' => $sourceLot->id,
+            'from_location' => $source->id, 'to_location' => $destination->id, 'qty' => 2, 'unit_cost' => $sourceCost,
+            'reference' => $transfer->transfer_no, 'reason' => 'Shipment', 'actor_id' => 10, 'happened_at' => now(),
+        ]);
+        $receiver = $this->user($destination, 'receiver', 30, ['transfers.edit']);
+
+        $this->actingAs($receiver, 'sanctum')->postJson("/api/transfers/{$transfer->id}/receive")->assertOk();
+
+        self::assertEquals(5.0, (float) $destinationLot->fresh()->qty);
+        $receivedLot = StockLot::query()->where('location_id', $destination->id)->where('id', '<>', $destinationLot->id)->sole();
+        self::assertSame($sourceSupplier, $receivedLot->supplier_id);
+        self::assertSame(number_format($sourceCost, 2, '.', ''), $receivedLot->unit_cost);
+        self::assertEquals(2.0, (float) $receivedLot->qty);
+        self::assertSame($receivedLot->id, Movement::query()->where('type', 'branch_transfer')->sole()->lot_id);
+    }
+
+    public static function conflictingLotProvenance(): array
+    {
+        return [
+            'different suppliers' => [11, 22, 100.0, 100.0],
+            'source supplier absent' => [null, 22, 100.0, 100.0],
+            'destination supplier absent' => [11, null, 100.0, 100.0],
+            'different costs' => [11, 11, 100.01, 100.02],
+        ];
     }
 
     private function user(Branch $branch, string $roleName, int $id, array $permissionCodes): User

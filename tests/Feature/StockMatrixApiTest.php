@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\Role;
 use App\Models\StockLot;
 use App\Models\User;
+use App\Services\StockService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -92,6 +93,31 @@ class StockMatrixApiTest extends TestCase
             ->assertJsonPath('data.0.total', 6)
             ->assertJsonMissingPath('data.0.quantities.'.$central->id)
             ->assertJsonMissingPath('data.0.quantities.'.$gyumri->id);
+    }
+
+    public function test_matrix_export_includes_each_product_once_across_chunks_with_names_out_of_id_order(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $actor = new User(['active' => true, 'branch_id' => $central->id]);
+        $actor->setRelation('branch', $central);
+        $codes = [];
+        for ($index = 1; $index <= 501; $index++) {
+            $code = sprintf('EXPORT-%03d', $index);
+            $codes[] = $code;
+            Product::query()->create([
+                'code' => $code, 'name' => sprintf('Product %03d', 502 - $index), 'unit' => 'հատ', 'active' => true,
+            ]);
+        }
+        Product::query()->create(['code' => 'OTHER', 'name' => 'Other', 'unit' => 'հատ', 'active' => true]);
+        Product::query()->create(['code' => 'EXPORT-OFF', 'name' => 'Inactive', 'unit' => 'հատ', 'active' => false]);
+        $exported = [];
+
+        app(StockService::class)->eachMatrixExportRow($actor, 'EXPORT-', function (array $row) use (&$exported): void {
+            $exported[] = $row[0];
+        });
+
+        self::assertCount(501, $exported);
+        self::assertSame($codes, array_values(array_unique($exported)));
     }
 
     private function roleWithStockView(): Role

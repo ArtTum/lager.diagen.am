@@ -11,7 +11,7 @@ class LegacyModuleParityTest extends TestCase
 {
     public function test_every_legacy_module_has_a_vue_page_and_laravel_api_route(): void
     {
-        $legacySource = File::get(base_path('../public/index.php'));
+        $legacySource = File::get(base_path('tests/Fixtures/legacy-modules.php'));
         self::assertSame(1, preg_match('/\$modules\s*=\s*\[(.*?)\n\];/s', $legacySource, $moduleBlock));
         preg_match_all("/'([a-z_]+)'\s*=>\s*\['[^']*',\s*'[^']*',\s*'([^']+)'\]/", $moduleBlock[1], $moduleMatches);
         $modules = $moduleMatches[1];

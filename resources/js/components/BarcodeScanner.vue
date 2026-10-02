@@ -5,13 +5,17 @@ import AppIcon from '@/components/AppIcon.vue';
 const emit = defineEmits(['detected']);
 const panelOpen = ref(false);
 const scanning = ref(false);
+const starting = ref(false);
 const status = ref('Տեսախցիկը գործարկելու համար սեղմեք «Միացնել տեսախցիկը»։');
 const video = ref(null);
 let stream = null;
 let detector = null;
 let frame = 0;
+let cameraVersion = 0;
 
 function stopCamera() {
+    cameraVersion += 1;
+    starting.value = false;
     scanning.value = false;
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
@@ -27,8 +31,10 @@ function close() {
 
 async function scanFrame() {
     if (!scanning.value || !detector || !video.value) return;
+    const version = cameraVersion;
     try {
         const matches = await detector.detect(video.value);
+        if (version !== cameraVersion || !scanning.value) return;
         const value = matches.find((match) => match.rawValue?.trim())?.rawValue?.trim();
         if (value) {
             status.value = `Կոդը ճանաչվեց՝ ${value}`;
@@ -39,19 +45,24 @@ async function scanFrame() {
     } catch {
         // A frame can be undecodable while the camera is moving; keep scanning.
     }
-    if (scanning.value) frame = requestAnimationFrame(scanFrame);
+    if (version === cameraVersion && scanning.value) frame = requestAnimationFrame(scanFrame);
 }
 
 async function startCamera() {
+    if (starting.value || scanning.value) return;
+    const version = ++cameraVersion;
+    starting.value = true;
     panelOpen.value = true;
     status.value = 'Ստուգվում է տեսախցիկի հասանելիությունը…';
     if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) {
         status.value = 'Այս դիտարկիչը չի աջակցում տեսախցիկով սկանավորմանը։ Մուտքագրեք կոդը դաշտում կամ օգտագործեք USB շտրիխ սկաներ։';
+        starting.value = false;
         return;
     }
 
     try {
         const supported = await window.BarcodeDetector.getSupportedFormats();
+        if (version !== cameraVersion) return;
         const formats = ['code_39', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'qr_code', 'data_matrix', 'itf', 'codabar']
             .filter((format) => supported.includes(format));
         if (!formats.length) {
@@ -59,18 +70,28 @@ async function startCamera() {
             return;
         }
         detector = new window.BarcodeDetector({ formats });
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        const acquiredStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        if (version !== cameraVersion) {
+            acquiredStream.getTracks().forEach((track) => track.stop());
+            return;
+        }
+        stream = acquiredStream;
         await nextTick();
+        if (version !== cameraVersion || !video.value) return;
         video.value.srcObject = stream;
         await video.value.play();
+        if (version !== cameraVersion) return;
         scanning.value = true;
         status.value = 'Ուղղեք շտրիխը կամ QR կոդը տեսախցիկին։';
         frame = requestAnimationFrame(scanFrame);
     } catch (error) {
+        if (version !== cameraVersion) return;
         stopCamera();
         status.value = error?.name === 'NotAllowedError'
             ? 'Տեսախցիկի թույլտվությունը մերժված է։ Կարող եք մուտքագրել կոդը կամ օգտագործել USB շտրիխ սկաներ։'
             : (error?.name === 'NotFoundError' ? 'Տեսախցիկ չի գտնվել։ Կարող եք մուտքագրել կոդը։' : 'Տեսախցիկը հասանելի չէ։ Ստուգեք թույլտվությունը և փորձեք կրկին։');
+    } finally {
+        if (version === cameraVersion) starting.value = false;
     }
 }
 
@@ -79,9 +100,9 @@ onBeforeUnmount(stopCamera);
 
 <template>
     <div class="barcode-scanner">
-        <button class="secondary-button" type="button" :disabled="scanning" @click="startCamera"><AppIcon name="camera" />{{ scanning ? 'Տեսախցիկը միացված է' : 'Սկանավորել տեսախցիկով' }}</button>
+        <button class="secondary-button" type="button" :disabled="starting || scanning" @click="startCamera"><AppIcon name="camera" />{{ scanning ? 'Տեսախցիկը միացված է' : 'Սկանավորել տեսախցիկով' }}</button>
         <section v-if="panelOpen" class="barcode-camera-panel" aria-live="polite">
-            <video v-if="scanning" ref="video" playsinline muted aria-label="Շտրիխ կոդի տեսախցիկի պատկերը"></video>
+            <video ref="video" playsinline muted aria-label="Շտրիխ կոդի տեսախցիկի պատկերը"></video>
             <div class="barcode-camera-status">
                 <p>{{ status }}</p>
                 <button class="secondary-button" type="button" @click="close">Փակել տեսախցիկը</button>

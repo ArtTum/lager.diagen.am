@@ -140,7 +140,8 @@ class ReturnService
                     }
                     $destinationLot = null;
                     if ($direction === 'branch_to_central') {
-                        $destinationLot = $this->returns->findCentralLot($productId, (string) $lot->lot_no, $lot->expires_on?->toDateString());
+                        $destinationLot = $this->returns->findCentralLot($productId, (string) $lot->lot_no, $lot->expires_on?->toDateString(),
+                            $lot->supplier_id === null ? null : (int) $lot->supplier_id, (float) $lot->unit_cost);
                         if ($destinationLot) {
                             $this->returns->addToLot((int) $destinationLot->id, $take);
                         } else {

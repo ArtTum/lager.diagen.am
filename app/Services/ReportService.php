@@ -104,12 +104,20 @@ class ReportService
         $from = (string) ($filters['from'] ?? now()->startOfMonth()->toDateString());
         $to = (string) ($filters['to'] ?? now()->toDateString());
         $columns = $this->columnsFor($type, $showCosts, $showSuppliers);
+        $query = $this->reports->query($type, $from, $to, $branchId, $filters);
+        $keys = array_keys($columns);
 
         return [
             'type' => $type,
             'headers' => array_values($columns),
-            'column_keys' => array_keys($columns),
-            'query' => $this->reports->query($type, $from, $to, $branchId, $filters),
+            'column_keys' => $keys,
+            'query' => $query,
+            'rows' => (function () use ($query, $keys): \Generator {
+                foreach ($query->cursor() as $row) {
+                    $values = $this->projectRow($row, $keys);
+                    yield array_map(static fn (string $key): mixed => $values[$key] ?? null, $keys);
+                }
+            })(),
         ];
     }
 
@@ -237,9 +245,10 @@ class ReportService
             : (array) $row;
 
         if (in_array('reserved_quantity', $keys, true)) {
-            $reserved = (int) ($values['location_id'] ?? 0) === 0
-                ? (float) ($values['reserved_requests'] ?? 0)
-                : (float) ($values['reserved_transfers'] ?? 0);
+            $reserved = (float) ($values['reserved_transfers'] ?? 0);
+            if ((int) ($values['location_id'] ?? 0) === 0) {
+                $reserved += (float) ($values['reserved_requests'] ?? 0);
+            }
             $values['reserved_quantity'] = $reserved;
             $values['free_quantity'] = max(0, (float) ($values['quantity'] ?? 0) - $reserved);
         }

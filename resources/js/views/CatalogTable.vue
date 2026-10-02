@@ -1,6 +1,6 @@
 <script setup>
 import Pagination from '@/components/Pagination.vue';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
@@ -109,7 +109,9 @@ async function load(pageNo = 1, pageSize = result.value?.pagination.per_page || 
 
 watch(search, () => { clearTimeout(timer); timer = setTimeout(() => load(1), 250); });
 watch(page, () => { result.value = null; search.value = ''; barcodeSearch.value = ''; load(1); });
-onMounted(() => { load(); window.addEventListener('lager:user', (event) => { me.value = event.detail; }); });
+const updateUser = (event) => { me.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { clearTimeout(timer); window.removeEventListener('lager:user', updateUser); });
 
 function applyScannedBarcode(value) {
     barcodeSearch.value = value;

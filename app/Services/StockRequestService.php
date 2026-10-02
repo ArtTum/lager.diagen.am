@@ -228,7 +228,8 @@ class StockRequestService
             $source = $this->requests->lotById((int) $move->lot_id);
             abort_unless($source, 409, 'Սկզբնական LOT-ը չի գտնվել։');
             $expiresOn = $source->expires_on?->format('Y-m-d');
-            $destination = $this->requests->matchingLot((int) $move->product_id, (int) $row->branch_id, $source->lot_no, $expiresOn);
+            $destination = $this->requests->matchingLot((int) $move->product_id, (int) $row->branch_id, $source->lot_no, $expiresOn,
+                $source->supplier_id === null ? null : (int) $source->supplier_id, (float) $move->unit_cost);
             if ($destination) {
                 $this->requests->increaseLot((int) $destination->id, (float) $move->qty);
             } else {

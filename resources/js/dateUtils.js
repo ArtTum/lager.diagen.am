@@ -11,6 +11,14 @@ export function toIsoDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+/** Defaults on business documents use the same timezone as displayed API dates. */
+export function todayIsoDate(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Yerevan', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+    return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export function displayIsoDate(value) {
     const date = parseIsoDate(value);
     return date ? `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}` : '';
