@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { formatDisplayDate } from '@/dateUtils';
@@ -35,14 +36,20 @@ async function printAct() {
   } finally { pdfBusy.value = false; }
 }
 
-onMounted(async () => {
+let requestVersion = 0;
+async function load() {
+  const version = ++requestVersion;
+  loading.value = true;
   try {
     const response = await api.get(`inventory/${route.params.session}/act`);
-    act.value = response.data.data;
+    if (version === requestVersion) { act.value = response.data.data; error.value = ''; }
   } catch (exception) {
-    error.value = exception.response?.data?.message || 'Գույքագրման ակտը չհաջողվեց բացել։';
-  } finally { loading.value = false; }
-});
+    if (version === requestVersion) error.value = exception.response?.data?.message || 'Գույքագրման ակտը չհաջողվեց բացել։';
+  } finally { if (version === requestVersion) loading.value = false; }
+}
+onMounted(load);
+onBeforeUnmount(() => { requestVersion += 1; });
+useLiveRefresh(load, { isBusy: () => loading.value || pdfBusy.value });
 </script>
 
 <template>

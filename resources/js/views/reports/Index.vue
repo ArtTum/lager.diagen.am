@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -131,6 +132,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => { listRequestVersion += 1; window.removeEventListener('lager:user', onUserChange); });
+useLiveRefresh(() => load(page.value), { isBusy: loading });
 </script>
 
 <template>

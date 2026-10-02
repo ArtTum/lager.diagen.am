@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import{computed,onBeforeUnmount,onMounted,reactive,ref,watch}from'vue';import{useRoute}from'vue-router';import api from'@/services/api';import{currentUser}from'@/router';import { formatDisplayDate } from '@/dateUtils';import ExportActions from '@/components/ExportActions.vue';
 const route=useRoute(),user=ref(currentUser()),result=ref(null),options=ref({products:[],branches:[]}),lots=ref([]),busy=ref(false),saving=ref(false),modal=ref(''),error=ref(''),notice=ref(''),search=ref('');let timer;
@@ -16,6 +17,7 @@ watch(()=>[adjust.product_id,adjust.location_id],loadLots);
 const isNewLot=computed(()=>!adjust.lot_id&&Number(adjust.delta_qty)>0);
 async function save(){if(saving.value)return;saving.value=true;error.value='';const mode=modal.value;try{if(mode==='consume')await api.post('stock/consume',{...consume,product_id:Number(consume.product_id),qty:Number(consume.qty),location_id:Number(consume.location_id)});else await api.post('stock/adjust',{...adjust,product_id:Number(adjust.product_id),lot_id:adjust.lot_id?Number(adjust.lot_id):null,delta_qty:Number(adjust.delta_qty),location_id:Number(adjust.location_id),unit_cost:adjust.unit_cost===''?undefined:Number(adjust.unit_cost)});modal.value='';notice.value=mode==='consume'?'Ելքը գրանցվեց։':'Պաշարի ուղղումը գրանցվեց։';await load(result.value?.pagination.current_page||1);setTimeout(()=>notice.value='',3200);}catch(e){error.value=Object.values(e.response?.data?.errors||{})[0]?.[0]||e.response?.data?.message||'Գործողությունը չպահպանվեց։';}finally{saving.value=false;}}
 const locationOptions=computed(()=>options.value.branches||[]);const currentProduct=computed(()=>options.value.products.find(p=>Number(p.id)===Number(adjust.product_id)));
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template><div class="page-heading"><div><p class="eyebrow">ՊԱՇԱՐԻ ՎԵՐԱՀՍԿՈՒՄ</p><h1>{{route.meta.title}}</h1><p class="muted">Մնացորդը հաշվարկվում է LOT-երով․ ելքը բաշխվում է ժամկետների FEFO հերթականությամբ։</p></div><div class="stock-actions"><RouterLink class="secondary-button" to="/stock/matrix"><AppIcon name="chart" />Մնացորդների մատրիցա</RouterLink><button v-if="can('stock.edit')" class="secondary-button" @click="open('adjust')"><AppIcon name="adjust" />Ճշգրտել մնացորդը</button><button v-if="can('stock.create')" class="primary-button" @click="open('consume')"><AppIcon name="arrowDown" />Գրանցել ելք</button></div></div>

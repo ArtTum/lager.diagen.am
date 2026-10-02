@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
@@ -14,6 +15,7 @@ function clear(){filters.threshold='';search.value='';load(1);}
 onMounted(()=>load());
 onBeforeUnmount(()=>{listRequestVersion+=1;});
 const status=(days)=>Number(days)<0?{title:`Անցել է ${Math.abs(Number(days))} օր`,tone:'expired'}:Number(days)<=30?{title:`Մնացել է ${days} օր`,tone:'soon'}:{title:`Մնացել է ${days} օր`,tone:'safe'};
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: busy });
 </script>
 
 <template>

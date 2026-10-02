@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -55,6 +56,7 @@ async function save() {
   finally { saving.value = false; }
 }
 const directionName = (direction) => direction === 'central_to_supplier' ? 'Կենտրոն → Մատակարար' : 'Մասնաճյուղ → Կենտրոն';
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>

@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -94,6 +95,7 @@ function togglePermissionGroup(items, enabled) {
 let timer;
 let listRequestVersion = 0;
 let formRequestVersion = 0;
+let traceRequestVersion = 0;
 
 async function load(pageNo = 1, pageSize = result.value?.pagination.per_page || 15) {
     const version = ++listRequestVersion;
@@ -114,7 +116,7 @@ watch(search, () => { clearTimeout(timer); timer = setTimeout(() => load(1), 250
 watch(page, () => { result.value = null; search.value = ''; barcodeSearch.value = ''; load(1); });
 const updateUser = (event) => { me.value = event.detail; };
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => { listRequestVersion += 1; formRequestVersion += 1; clearTimeout(timer); window.removeEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; formRequestVersion += 1; traceRequestVersion += 1; clearTimeout(timer); window.removeEventListener('lager:user', updateUser); });
 
 function applyScannedBarcode(value) {
     barcodeSearch.value = value;
@@ -233,6 +235,7 @@ async function openTrace(row) {
 }
 
 async function loadTrace(productId) {
+    const version = ++traceRequestVersion;
     traceBusy.value = true;
     error.value = '';
     try {
@@ -241,10 +244,10 @@ async function loadTrace(productId) {
             movements_page: tracePages.movements,
             requests_page: tracePages.requests,
         } });
-        traceData.value = response.data.data;
+        if (version === traceRequestVersion) traceData.value = response.data.data;
     } catch (e) {
-        error.value = e.response?.data?.message || 'Ապրանքի հետագիծը չհաջողվեց բեռնել։';
-    } finally { traceBusy.value = false; }
+        if (version === traceRequestVersion) error.value = e.response?.data?.message || 'Ապրանքի հետագիծը չհաջողվեց բեռնել։';
+    } finally { if (version === traceRequestVersion) traceBusy.value = false; }
 }
 
 function changeTracePage(list, pageNumber) {
@@ -271,6 +274,9 @@ function cell(row, key) {
     if (/(?:_at|_on|_date)$/.test(key) || key === 'date') return formatDisplayDate(value);
     return String(value);
 }
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
+useLiveRefresh(() => traceOpen.value && traceData.value ? loadTrace(traceData.value.product.id) : undefined, { isBusy: traceBusy });
+useLiveRefresh(() => categoriesOpen.value ? loadOptions() : undefined, { isBusy: () => categoryBusy.value || categorySaving.value });
 </script>
 
 <template>

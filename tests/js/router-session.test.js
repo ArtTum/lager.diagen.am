@@ -145,6 +145,7 @@ function mountShell(api) {
     const App = loadScript(script.content, {
         '@/services/api': api, '@/router': context, '@/router/access': access,
         '@/components/NotificationBell.vue': stub,
+        '@/services/realtime': { startRealtime: () => () => {} },
         'vue-router': { useRoute: () => Vue.reactive({ path: '/stock', meta: {} }), useRouter: () => ({ replace: async (path) => { replacements.push(path); } }), RouterView: stub },
     }).default;
     const root = document.createElement('div');

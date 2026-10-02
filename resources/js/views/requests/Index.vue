@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
@@ -52,6 +53,7 @@ async function reviewFor(row,decision){if(saving.value)return;saving.value=true;
 async function runAction(){if(!confirmAction.value||saving.value)return;saving.value=true;error.value='';const {row,key}=confirmAction.value;try{await api.post(`requests/${row.id}/${key}`);confirmAction.value=null;notice.value='Գործողությունը կատարվեց։';await load(result.value?.pagination.current_page||1);}catch(e){error.value=e.response?.data?.message||'Գործողությունը չկատարվեց։';}finally{saving.value=false;}}
 const statusLabel=s=>({draft:'Սևագիր',sent:'Ուղարկված',review:'Ստուգման փուլում',approved:'Հաստատված',partially_approved:'Մասնակի հաստատված',collecting:'Հավաքագրվում է',ready_to_ship:'Պատրաստ է առաքման',shipped:'Ուղարկված է',received:'Ստացված է',closed:'Փակված',cancelled:'Չեղարկված',rejected:'Մերժված'}[s]||s);
 const actionTitle=k=>({cancel:'Չեղարկե՞լ պահանջագիրը',collect:'Սկսե՞լ հավաքագրումը',ready:'Նշե՞լ որպես առաքման պատրաստ',ship:'Ուղարկե՞լ մասնաճյուղ',receive:'Հաստատե՞լ ստացումը',close:'Փակե՞լ պահանջագիրը'}[k]||'Հաստատե՞լ գործողությունը');
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>

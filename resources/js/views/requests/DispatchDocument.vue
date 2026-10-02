@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { RouterLink, useRoute } from 'vue-router';
 import api from '@/services/api';
 import { formatDisplayDate } from '@/dateUtils';
@@ -17,11 +18,19 @@ function printDocument() {
   window.print();
 }
 
-onMounted(async () => {
-  try { document.value = (await api.get(`requests/${route.params.request}/dispatch-document`)).data.data; }
-  catch (e) { error.value = e.response?.data?.message || 'Բաշխման փաստաթուղթը չհաջողվեց բեռնել։'; }
-  finally { loading.value = false; }
-});
+let requestVersion = 0;
+async function load() {
+  const version = ++requestVersion;
+  loading.value = true;
+  try {
+    const response = await api.get(`requests/${route.params.request}/dispatch-document`);
+    if (version === requestVersion) { document.value = response.data.data; error.value = ''; }
+  } catch (e) { if (version === requestVersion) error.value = e.response?.data?.message || 'Բաշխման փաստաթուղթը չհաջողվեց բեռնել։'; }
+  finally { if (version === requestVersion) loading.value = false; }
+}
+onMounted(load);
+onBeforeUnmount(() => { requestVersion += 1; });
+useLiveRefresh(load, { isBusy: loading });
 </script>
 
 <template>

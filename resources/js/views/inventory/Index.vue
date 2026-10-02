@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -130,6 +131,7 @@ async function approve() {
   finally { saving.value = false; }
 }
 function status(value) { return ({ open: 'Հաշվարկման փուլում', counted: 'Սպասում է հաստատման', closed: 'Փակված' })[value] || value; }
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>

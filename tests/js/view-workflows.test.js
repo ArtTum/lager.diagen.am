@@ -15,6 +15,8 @@ const require = createRequire(import.meta.url);
 const Vue = require('vue');
 const VueRouter = require('vue-router');
 const stub = { render: () => null };
+const liveRefresh = { exports: {} };
+new Function('require', 'module', 'exports', transformSync(readFileSync(new URL('../../resources/js/composables/useLiveRefresh.js', import.meta.url), 'utf8'), { format: 'cjs' }).code)(require, liveRefresh, liveRefresh.exports);
 
 function deferred() {
     let resolve;
@@ -28,7 +30,7 @@ function component(relativePath, dependencies = {}) {
     const script = compileScript(descriptor, { id: relativePath, inlineTemplate: true });
     const { code } = transformSync(script.content, { format: 'cjs', loader: 'js' });
     const module = { exports: {} };
-    new Function('require', 'module', 'exports', code)((name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name), module, module.exports);
+    new Function('require', 'module', 'exports', code)((name) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === '@/composables/useLiveRefresh' ? liveRefresh.exports : require(name), module, module.exports);
     return module.exports.default;
 }
 
@@ -39,13 +41,14 @@ function list(data, columns = { name: 'Name' }, extra = {}) {
     return { data: { data, columns, pagination: { total: data.length, per_page: 15, current_page: 1, last_page: 1 }, ...extra } };
 }
 
-async function mountView(relativePath, path, api, user = {}) {
+async function mountView(relativePath, path, api, user = {}, dependencies = {}) {
     const definition = component(relativePath, {
         '@/components/Pagination.vue': stub, '@/components/ExportActions.vue': stub,
         '@/components/ListFilterBar.vue': stub, '@/components/BarcodeScanner.vue': stub,
         '@/components/DestructiveConfirmDialog.vue': stub,
         '@/services/api': api, '@/router': { currentUser: () => user },
         '@/dateUtils': dateUtils, '@/permissions': { canCreateRecord },
+        ...dependencies,
     });
     const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
         { path, component: stub, meta: { title: 'Audit scenario' } },
@@ -209,6 +212,7 @@ const listViews = [
     ['CatalogTable.vue', '/branches', 'pages/branches'],
     ['PageTable.vue', '/other', 'pages/other'],
     ['purchasing/Index.vue', '/purchases', 'pages/purchases'],
+    ['purchasing/Index.vue', '/receipts', 'pages/receipts'],
     ['requests/Index.vue', '/requests', 'pages/requests'],
     ['transfers/Index.vue', '/transfers', 'pages/transfers'],
     ['inventory/Index.vue', '/inventory', 'inventory'],
@@ -257,3 +261,123 @@ for (const [filename, path, endpoint] of listViews) {
         } finally { view?.unmount(); globalThis.setTimeout = previousSetTimeout; }
     });
 }
+
+const livePagination = {
+    emits: ['page-change'],
+    render() { return Vue.h('button', { class: 'test-next-page', onClick: () => this.$emit('page-change', 3) }, 'Page 3'); },
+};
+const liveFilters = {
+    emits: ['change', 'apply'],
+    render() { return Vue.h('button', { class: 'test-apply-filter', onClick: () => { this.$emit('change', { key: 'from', value: '2026-01-01' }); this.$emit('apply'); } }, 'Apply date'); },
+};
+
+for (const [filename, path, endpoint] of listViews) {
+    test(`${path} refreshes a realtime burst on its current search, filters, page and page size`, async () => {
+        const calls = [];
+        let searchCallback;
+        const previousSetTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = (callback, delay, ...args) => {
+            if (delay === 250) { searchCallback = () => callback(...args); return -1; }
+            return previousSetTimeout(callback, delay, ...args);
+        };
+        let view;
+        try {
+            view = await mountView(`views/${filename}`, path, {
+                async get(requestedEndpoint, { params }) {
+                    assert.equal(requestedEndpoint, endpoint);
+                    calls.push(structuredClone(params));
+                    const marker = `LIVE-ROW-${calls.length}`;
+                    const response = list([{ id: 1, name: marker, code: marker, request_no: marker, transfer_no: marker, inventory_no: marker, movement_no: marker, action: marker, quantity: 1, total: 1, product: path === '/returns' ? { name: marker, code: marker } : marker }]);
+                    response.data.pagination = { total: 90, per_page: 30, current_page: params.page, last_page: 3 };
+                    if (path === '/suppliers') Object.assign(response.data, response.data.pagination);
+                    return response;
+                },
+            }, {}, { '@/components/Pagination.vue': livePagination, '@/components/ListFilterBar.vue': liveFilters });
+            await settle();
+            change(view.root.querySelector('.search-input input, .expiry-search input, input[placeholder*="Փաստաթուղթ"]'), 'keep this search');
+            await Vue.nextTick();
+            if (path === '/expiry') submit(view.root.querySelector('.expiry-toolbar'));
+            else searchCallback();
+            await settle();
+            view.root.querySelector('.test-apply-filter')?.click(); await settle();
+            view.root.querySelector('.test-next-page').click(); await settle();
+            const before = calls.length;
+            const currentParams = calls.at(-1);
+            assert.equal(currentParams.page, 3);
+            assert.equal(currentParams.per_page, 30);
+            window.dispatchEvent(new CustomEvent('lager:data-changed'));
+            window.dispatchEvent(new CustomEvent('lager:data-changed'));
+            await settle();
+            assert.equal(calls.length, before + 1, 'one fetch handles a burst');
+            assert.deepEqual(calls.at(-1), currentParams, 'realtime refresh retains the current view state');
+            assert.match(view.root.querySelector('tbody').textContent, new RegExp(`LIVE-ROW-${before + 1}`));
+            view.unmount(); view = null;
+            window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+            assert.equal(calls.length, before + 1, 'unmounted pages release their live listener');
+        } finally { view?.unmount(); globalThis.setTimeout = previousSetTimeout; }
+    });
+}
+
+test('changes arriving during a list load fetch one trailing current snapshot without overwriting a draft', async () => {
+    const waiting = deferred(); const calls = [];
+    const view = await mountView('views/CatalogTable.vue', '/branches', {
+        get(endpoint) {
+            calls.push(endpoint);
+            if (endpoint === 'catalog/branches/options') return Promise.resolve({ data: { data: {} } });
+            const response = list([{ id: 1, name: `Snapshot ${calls.length}`, active: true }]);
+            return calls.length === 2 ? waiting.promise : Promise.resolve(response);
+        },
+    }, { permissions: { 'branches.create': true } });
+    try {
+        await settle();
+        view.root.querySelector('.page-heading .primary-button').click(); await settle();
+        const input = view.root.querySelector('.catalog-modal input');
+        change(input, 'Unsaved branch name'); await settle();
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(calls.length, 2);
+        for (let index = 0; index < 5; index += 1) window.dispatchEvent(new CustomEvent('lager:data-changed'));
+        await settle(); assert.equal(calls.length, 2, 'an in-flight load is not duplicated');
+        waiting.resolve(list([{ id: 1, name: 'Older live snapshot' }])); await settle(); await settle();
+        assert.equal(calls.length, 3, 'a change during loading requests one trailing snapshot');
+        assert.match(view.root.querySelector('tbody').textContent, /Snapshot 3/);
+        assert.equal(input.value, 'Unsaved branch name');
+        assert.ok(view.root.querySelector('.catalog-modal'));
+    } finally { view.unmount(); }
+});
+
+test('realtime report refresh retains the selected report, dates and pagination', async () => {
+    const calls = [];
+    const metadata = { report_types: { stock_by_location: 'Stock', receipts: 'Receipts' }, filters: {}, summary: {} };
+    const view = await mountView('views/reports/Index.vue', '/reports', {
+        async get(endpoint, { params }) {
+            assert.equal(endpoint, 'reports'); calls.push(structuredClone(params));
+            const response = list([{ name: `REPORT-${calls.length}` }], undefined, metadata);
+            response.data.pagination = { total: 90, per_page: 30, current_page: params.page, last_page: 3 };
+            return response;
+        },
+    }, { permissions: { 'reports.view': true } }, { '@/components/Pagination.vue': livePagination });
+    try {
+        await settle();
+        change(view.root.querySelector('select'), 'receipts'); await settle();
+        view.root.querySelector('.test-next-page').click(); await settle();
+        const current = calls.at(-1); const before = calls.length;
+        assert.equal(current.report_type, 'receipts'); assert.equal(current.page, 3); assert.equal(current.per_page, 30);
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(calls.length, before + 1); assert.deepEqual(calls.at(-1), current);
+        assert.match(view.root.querySelector('tbody').textContent, new RegExp(`REPORT-${before + 1}`));
+    } finally { view.unmount(); }
+});
+
+test('dashboard metrics refresh on a realtime invalidation and stop after unmount', async () => {
+    let calls = 0;
+    const view = await mountView('views/dashboard/Index.vue', '/', {
+        async get(endpoint) { assert.equal(endpoint, 'dashboard'); calls += 1; return { data: { data: { products: 1, units: calls * 10 } } }; },
+    }, { permissions: { 'stock.view': true } });
+    try {
+        await settle(); assert.equal(view.root.querySelector('.dashboard-hero-panel strong').textContent, '10');
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(view.root.querySelector('.dashboard-hero-panel strong').textContent, '20');
+        view.unmount(); window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(calls, 2);
+    } finally { if (view.root.isConnected) view.unmount(); }
+});

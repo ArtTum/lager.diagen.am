@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
@@ -30,6 +31,7 @@ const blank = () => ({ name: '', tax_id: '', address: '', contact_name: '', phon
 const form = reactive(blank());
 let debounce;
 let listRequestVersion = 0;
+let historyRequestVersion = 0;
 
 const suppliers = computed(() => page.value?.data || []);
 const missingCount = (supplier) => ['tax_id', 'address', 'contact_name', 'phone', 'email', ...(canViewFinancial.value ? ['bank_details'] : []), 'contract_no', 'contract_start', 'contract_end', 'payment_terms', 'delivery_days'].filter((key) => supplier[key] === null || supplier[key] === undefined || String(supplier[key]).trim() === '').length;
@@ -48,7 +50,7 @@ async function load(pageNumber = 1, pageSize = page.value?.per_page || 15) {
 watch([search, showInactive], () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
 const updateUser = (event) => { user.value = event.detail; };
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; historyRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
 
 function openCreate() {
     if (!can('suppliers.create')) return;
@@ -80,15 +82,16 @@ async function openHistory(supplier) {
 
 async function loadHistory() {
     if (!historySupplierId.value) return;
+    const version = ++historyRequestVersion;
     historyBusy.value = true; error.value = '';
     try {
         const response = await api.get(`suppliers/${historySupplierId.value}/history`, {
             params: { receipts_page: receiptPage.value, lots_page: lotPage.value },
         });
-        historyData.value = response.data.data;
+        if (version === historyRequestVersion) historyData.value = response.data.data;
     }
-    catch (e) { error.value = e.response?.data?.message || 'Մատակարարի պատմությունը չհաջողվեց բեռնել։'; }
-    finally { historyBusy.value = false; }
+    catch (e) { if (version === historyRequestVersion) error.value = e.response?.data?.message || 'Մատակարարի պատմությունը չհաջողվեց բեռնել։'; }
+    finally { if (version === historyRequestVersion) historyBusy.value = false; }
 }
 
 function changeHistoryPage(list, pageNumber) {
@@ -133,6 +136,8 @@ async function confirmDeactivate() {
     } catch (e) { confirmError.value = e.response?.data?.message || 'Մատակարարը չհաջողվեց ապաակտիվացնել։'; }
     finally { saving.value = false; }
 }
+useLiveRefresh(() => load(page.value?.current_page || 1), { isBusy: () => busy.value || saving.value });
+useLiveRefresh(() => historyOpen.value ? loadHistory() : undefined, { isBusy: historyBusy });
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { RouterLink } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
@@ -9,11 +10,21 @@ const user = ref(currentUser());
 const error = ref('');
 const dateLabel = new Intl.DateTimeFormat('hy-AM', { dateStyle: 'long' }).format(new Date());
 
-onMounted(async () => {
-    try { data.value = (await api.get('dashboard')).data.data; }
-    catch (e) { error.value = e.response?.data?.message || 'Վահանակի տվյալները չհաջողվեց բեռնել։'; }
-});
-onMounted(() => window.addEventListener('lager:user', (event) => { user.value = event.detail; }));
+let requestVersion = 0;
+const loading = ref(false);
+async function load() {
+    const version = ++requestVersion;
+    loading.value = true;
+    try {
+        const response = await api.get('dashboard');
+        if (version === requestVersion) { data.value = response.data.data; error.value = ''; }
+    } catch (e) { if (version === requestVersion) error.value = e.response?.data?.message || 'Վահանակի տվյալները չհաջողվեց բեռնել։'; }
+    finally { if (version === requestVersion) loading.value = false; }
+}
+const onUserChange = (event) => { user.value = event.detail; };
+onMounted(() => { load(); window.addEventListener('lager:user', onUserChange); });
+onBeforeUnmount(() => { requestVersion += 1; window.removeEventListener('lager:user', onUserChange); });
+useLiveRefresh(load, { isBusy: loading });
 
 const can = (permission) => Boolean(user.value?.permissions?.[permission]);
 const formatNumber = (value, maximumFractionDigits = 0) => Number(value || 0).toLocaleString('hy-AM', { maximumFractionDigits });

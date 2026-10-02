@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { useRoute, RouterLink } from 'vue-router';
 import api from '@/services/api';
 
@@ -7,10 +8,20 @@ const route = useRoute();
 const data = ref(null);
 const error = ref('');
 function printLabel() { window.print(); }
-onMounted(async () => {
-  try { data.value = (await api.get(`products/${route.params.product}/label`)).data.data; }
-  catch (e) { error.value = e.response?.data?.message || 'Պիտակի տվյալները չհաջողվեց բեռնել։'; }
-});
+let requestVersion = 0;
+const loading = ref(false);
+async function load() {
+  const version = ++requestVersion;
+  loading.value = true;
+  try {
+    const response = await api.get(`products/${route.params.product}/label`);
+    if (version === requestVersion) { data.value = response.data.data; error.value = ''; }
+  } catch (e) { if (version === requestVersion) error.value = e.response?.data?.message || 'Պիտակի տվյալները չհաջողվեց բեռնել։'; }
+  finally { if (version === requestVersion) loading.value = false; }
+}
+onMounted(load);
+onBeforeUnmount(() => { requestVersion += 1; });
+useLiveRefresh(load, { isBusy: loading });
 </script>
 
 <template>

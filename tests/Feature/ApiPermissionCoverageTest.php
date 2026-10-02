@@ -15,7 +15,7 @@ class ApiPermissionCoverageTest extends TestCase
 
         foreach ($apiRoutes as $route) {
             $uri = $route->uri();
-            if (in_array($uri, ['api/auth/login', 'api/auth/me', 'api/auth/logout'], true)) {
+            if (in_array($uri, ['api/auth/login', 'api/auth/me', 'api/auth/logout', 'api/broadcasting/auth'], true)) {
                 continue;
             }
 
@@ -41,7 +41,7 @@ class ApiPermissionCoverageTest extends TestCase
 
         foreach ($apiRoutes as $route) {
             $uri = $route->uri();
-            if (in_array($uri, ['api/auth/login', 'api/auth/me', 'api/auth/logout'], true)) {
+            if (in_array($uri, ['api/auth/login', 'api/auth/me', 'api/auth/logout', 'api/broadcasting/auth'], true)) {
                 continue;
             }
 
@@ -70,6 +70,15 @@ class ApiPermissionCoverageTest extends TestCase
             $this->assertContains('auth:sanctum', $middleware, "$method $uri must require Sanctum authentication.");
             $this->assertContains('active.user', $middleware, "$method $uri must reject inactive accounts.");
         }
+    }
+
+    public function test_broadcast_authorization_requires_authentication_and_an_active_account(): void
+    {
+        $route = Route::getRoutes()->match(request()->create('/api/broadcasting/auth', 'POST'));
+        $middleware = $route->middleware();
+
+        self::assertContains('auth:sanctum', $middleware);
+        self::assertContains('active.user', $middleware);
     }
 
     public function test_every_api_permission_is_defined_in_the_shared_catalog(): void

@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -47,6 +48,7 @@ async function reverse() {
 }
 const typeName = (type) => ({ receipt: 'Մուտք', consumption: 'Ելք', transfer_sent: 'Ուղարկում', branch_transfer: 'Տեղափոխում', inventory_adjustment: 'Գույքագրման ուղղում', return_in: 'Վերադարձ կենտրոն', return_supplier: 'Մատակարարին վերադարձ', movement_reversal: 'Հակադարձ շարժ' })[type] || type;
 const locationName = (id, name) => Number(id) === 0 ? 'Կենտրոնական պահեստ' : (name || '—');
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>

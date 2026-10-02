@@ -5,11 +5,14 @@ import api from '@/services/api';
 import { currentUser } from '@/router';
 import { emptyNotificationSnapshot, isCurrentNotificationSnapshot } from '@/notifications';
 import { createNotificationAudio } from '@/notificationAudio';
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 
 const router = useRouter(); const user = ref(currentUser());
 const items = ref([]); const unread = ref(0); const open = ref(false);
 const soundEnabled = ref(localStorage.getItem('lagerNotificationSound') === 'on');
-let timer; let previousKeys = null;
+let previousKeys = null;
+const loading = ref(false);
+const markingKeys = new Set();
 let sessionVersion = 0;
 let requestVersion = 0;
 const notificationAudio = createNotificationAudio(
@@ -20,6 +23,10 @@ const permitted = () => Boolean(user.value?.permissions?.['notifications.view'])
 const onUserChange = (event) => {
   user.value = event.detail;
   sessionVersion += 1;
+  requestVersion += 1;
+  loading.value = false;
+  markingKeys.clear();
+  open.value = false;
   const empty = emptyNotificationSnapshot();
   previousKeys = empty.previousKeys;
   items.value = empty.items;
@@ -27,6 +34,7 @@ const onUserChange = (event) => {
   refresh(false);
 };
 const onSoundChange = (event) => { soundEnabled.value = Boolean(event.detail); };
+useLiveRefresh(() => refresh(), { isBusy: loading, fallbackInterval: 45000 });
 
 async function refresh(announce = true) {
   if (!permitted()) {
@@ -38,6 +46,7 @@ async function refresh(announce = true) {
   }
   const currentSession = sessionVersion;
   const currentRequest = ++requestVersion;
+  loading.value = true;
   const snapshot = { sessionVersion: currentSession, requestVersion: currentRequest };
   try {
     const response = await api.get('notifications');
@@ -46,7 +55,8 @@ async function refresh(announce = true) {
     const keys = new Set(nextItems.filter((item) => !item.read).map((item) => item.key));
     if (announce && previousKeys !== null && [...keys].some((key) => !previousKeys.has(key)) && soundEnabled.value) playTone();
     previousKeys = keys; items.value = nextItems; unread.value = nextUnread;
-  } catch { /* Keep the shell usable if notification polling is temporarily unavailable. */ }
+  } catch { /* Keep the shell usable if notification fetching is temporarily unavailable. */ }
+  finally { if (currentSession === sessionVersion && currentRequest === requestVersion) loading.value = false; }
 }
 
 function playTone() { void notificationAudio.play(); }
@@ -66,21 +76,32 @@ function togglePopover() {
 }
 
 async function openItem(item) {
+  if (markingKeys.has(item.key)) return;
+  const currentSession = sessionVersion;
+  markingKeys.add(item.key);
   try {
     if (!item.read) {
-      await api.post('notifications/read', { key: item.key }); item.read = true; unread.value = Math.max(0, unread.value - 1);
+      await api.post('notifications/read', { key: item.key });
+      if (currentSession !== sessionVersion || !permitted()) return;
+      requestVersion += 1;
+      loading.value = false;
+      item.read = true; unread.value = Math.max(0, unread.value - 1);
+      window.dispatchEvent(new CustomEvent('lager:data-changed'));
     }
+    if (currentSession !== sessionVersion || !permitted()) return;
     open.value = false; await router.push(item.link || '/notifications');
   } catch { /* The notifications page shows the underlying actionable alert. */ }
+  finally { if (currentSession === sessionVersion) markingKeys.delete(item.key); }
 }
 
 onMounted(() => {
   window.addEventListener('lager:user', onUserChange);
   window.addEventListener('lager:notification-sound', onSoundChange);
-  refresh(false); timer = window.setInterval(() => refresh(), 45000);
+  refresh(false);
 });
 onBeforeUnmount(() => {
-  window.clearInterval(timer);
+  sessionVersion += 1;
+  requestVersion += 1;
   window.removeEventListener('lager:user', onUserChange);
   window.removeEventListener('lager:notification-sound', onSoundChange);
   void notificationAudio.close();

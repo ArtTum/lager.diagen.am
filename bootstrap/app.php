@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\BroadcastDataChanges;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\RequirePermission;
 use Illuminate\Foundation\Application;
@@ -13,7 +14,12 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withBroadcasting(__DIR__.'/../routes/channels.php', [
+        'prefix' => 'api',
+        'middleware' => ['api', 'auth:sanctum', 'active.user'],
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->appendToGroup('api', BroadcastDataChanges::class);
         $middleware->redirectGuestsTo(static fn ($request): ?string => $request->is('api/*') ? null : route('login'),
         );
         $middleware->alias([

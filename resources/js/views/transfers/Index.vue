@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -80,6 +81,7 @@ async function runAction() {
 }
 const statusLabel = (status) => ({ pending: 'Սպասում է հաստատման', stock_shortage: 'Սպասում է պաշարի համալրման', approved: 'Հաստատված է', shipped: 'Ուղարկված է', completed: 'Ստացված է', rejected: 'Մերժված է' }[status] || status);
 const itemName = (id) => options.value.products.find((p) => Number(p.id) === Number(id))?.name || 'Ապրանք';
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>

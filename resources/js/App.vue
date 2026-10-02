@@ -5,6 +5,7 @@ import api from '@/services/api';
 import { currentUser, refreshCurrentUser, setCurrentUser } from '@/router';
 import { userContextChanged } from '@/router/access';
 import NotificationBell from '@/components/NotificationBell.vue';
+import { startRealtime } from '@/services/realtime';
 
 const route = useRoute();
 const router = useRouter();
@@ -17,6 +18,12 @@ const profileMenuOpen = ref(false);
 const accountDetailsOpen = ref(false);
 const profileMenuRoot = ref(null);
 let contextRefreshTimer;
+let stopRealtime;
+let contextRefreshDebounce;
+const onDataChange = () => {
+    window.clearTimeout(contextRefreshDebounce);
+    contextRefreshDebounce = window.setTimeout(refreshUserContext, 150);
+};
 const updateUser = (event) => { user.value = event.detail; };
 const closeProfileMenuOnOutsideClick = (event) => {
     if (!profileMenuRoot.value?.contains(event.target)) profileMenuOpen.value = false;
@@ -69,6 +76,8 @@ onMounted(() => {
     document.addEventListener('keydown', closeProfileMenuOnEscape);
     contextRefreshTimer = window.setInterval(refreshUserContext, 45000);
     window.addEventListener('focus', refreshUserContext);
+    window.addEventListener('lager:data-changed', onDataChange);
+    stopRealtime = startRealtime(currentUser);
 });
 
 onBeforeUnmount(() => {
@@ -78,6 +87,9 @@ onBeforeUnmount(() => {
     document.removeEventListener('pointerdown', closeProfileMenuOnOutsideClick);
     document.removeEventListener('keydown', closeProfileMenuOnEscape);
     window.removeEventListener('focus', refreshUserContext);
+    window.removeEventListener('lager:data-changed', onDataChange);
+    window.clearTimeout(contextRefreshDebounce);
+    stopRealtime?.();
 });
 
 async function refreshUserContext() {

@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
@@ -48,6 +49,7 @@ async function exportCsv() {
     URL.revokeObjectURL(url);
   } catch (e) { error.value = e.response?.data?.message || 'CSV ֆայլը չհաջողվեց ներբեռնել։'; }
 }
+useLiveRefresh(() => load(page.value), { isBusy: busy });
 </script>
 
 <template>

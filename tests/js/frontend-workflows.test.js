@@ -12,7 +12,7 @@ import * as notifications from '../../resources/js/notifications.js';
 import * as notificationAudio from '../../resources/js/notificationAudio.js';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://lager.test/' });
-for (const key of ['window', 'document', 'history', 'HTMLElement', 'SVGElement', 'Element', 'Node', 'CustomEvent', 'localStorage']) {
+for (const key of ['window', 'document', 'history', 'Document', 'HTMLElement', 'SVGElement', 'Element', 'Node', 'CustomEvent', 'localStorage']) {
     globalThis[key] = dom.window[key];
 }
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
@@ -21,6 +21,8 @@ const require = createRequire(import.meta.url);
 const Vue = require('vue');
 const VueRouter = require('vue-router');
 const stub = { render: () => null };
+const liveRefresh = { exports: {} };
+new Function('require', 'module', 'exports', transformSync(readFileSync(new URL('../../resources/js/composables/useLiveRefresh.js', import.meta.url), 'utf8'), { format: 'cjs' }).code)(require, liveRefresh, liveRefresh.exports);
 
 function deferred() {
     let resolve;
@@ -35,7 +37,7 @@ function component(relativePath, dependencies = {}) {
     const script = compileScript(descriptor, { id: relativePath, inlineTemplate: true });
     const { code } = transformSync(script.content, { format: 'cjs', loader: 'js' });
     const module = { exports: {} };
-    const load = (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name);
+    const load = (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === '@/composables/useLiveRefresh' ? liveRefresh.exports : name === '@/services/realtime' ? { startRealtime: () => () => {} } : require(name);
     new Function('require', 'module', 'exports', code)(load, module, module.exports);
     return module.exports.default;
 }
@@ -175,7 +177,7 @@ test('navigating between purchase orders and receipts reloads the module and clo
     try {
         await settle();
         assert.match(view.root.textContent, /PURCHASE-001/);
-        assert.equal(userListeners.size, 2);
+        assert.equal(userListeners.size, 3);
         view.root.querySelector('.page-heading button').click();
         await settle();
         assert.ok(view.root.querySelector('.purchase-modal'));
@@ -190,7 +192,7 @@ test('navigating between purchase orders and receipts reloads the module and clo
         assert.match(view.root.textContent, /RECEIPT-001/);
         assert.equal(view.root.querySelector('.search-input input').value, '');
         assert.ok(requests.some(({ endpoint, params }) => endpoint === 'pages/receipts' && !params.search));
-        assert.equal(userListeners.size, 2, 'the previous routed page must release its user listener');
+        assert.equal(userListeners.size, 3, 'the previous routed page must release its user and refresh listeners');
     } finally {
         view.unmount();
         window.addEventListener = addListener;
@@ -243,10 +245,12 @@ function notificationEnvironment(sound = 'on') {
     const previousContext = window.AudioContext;
     const previousSetInterval = window.setInterval;
     const previousClearInterval = window.clearInterval;
+    const previousRealtimeStatus = window.lagerRealtimeStatus;
     const intervals = new Map();
     const audio = { started: 0, resumed: 0, closed: 0, frequencies: [] };
     let nextInterval = 0;
     localStorage.setItem('lagerNotificationSound', sound);
+    window.lagerRealtimeStatus = { connected: false, status: 'disconnected' };
     window.setInterval = (callback, delay) => {
         intervals.set(++nextInterval, { callback, delay });
         return nextInterval;
@@ -282,6 +286,7 @@ function notificationEnvironment(sound = 'on') {
             window.AudioContext = previousContext;
             window.setInterval = previousSetInterval;
             window.clearInterval = previousClearInterval;
+            window.lagerRealtimeStatus = previousRealtimeStatus;
             if (previousSound === null) localStorage.removeItem('lagerNotificationSound');
             else localStorage.setItem('lagerNotificationSound', previousSound);
         },
@@ -393,6 +398,7 @@ test('a session change discards the old notification poll and establishes a sile
         view.root.querySelector('.notification-bell-trigger').click();
         await settle();
         const oldPoll = environment.poll();
+        await settle();
         assert.equal(pending.length, 2);
         window.dispatchEvent(new CustomEvent('lager:user', {
             detail: { id: 2, permissions: { 'notifications.view': true } },
@@ -410,7 +416,103 @@ test('a session change discards the old notification poll and establishes a sile
         pending[2].resolve(notificationResponse([notificationItem('new-user-initial')]));
         await settle();
         assert.equal(view.root.querySelector('.notification-badge').textContent, '1');
+        view.root.querySelector('.notification-bell-trigger').click(); await settle();
         assert.match(view.root.textContent, /new-user-initial/);
         assert.equal(environment.audio.started, 0, 'the new user feed is a silent initial snapshot');
     } finally { view.unmount(); environment.restore(); }
+});
+
+async function mountNotificationsPage(api) {
+    const Page = component('views/notifications/Index.vue', {
+        '@/services/api': api,
+        '@/router': { currentUser: () => ({ id: 1, permissions: { 'notifications.view': true } }) },
+        '@/notifications': notifications, '@/notificationAudio': notificationAudio,
+    });
+    const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
+        { path: '/notifications', component: stub, meta: { title: 'Notifications' } },
+    ] });
+    await router.push('/notifications');
+    return mount(Page, { router });
+}
+
+function realtimeStatus(connected) {
+    window.lagerRealtimeStatus = { connected, status: connected ? 'connected' : 'disconnected' };
+    window.dispatchEvent(new CustomEvent('lager:realtime-status', { detail: window.lagerRealtimeStatus }));
+}
+
+test('realtime notifications coalesce bursts, sound once and synchronize read status with fallback only offline', async () => {
+    const environment = notificationEnvironment();
+    let feed = [notificationItem('existing')];
+    let calls = 0;
+    const api = {
+        async get() { calls += 1; return notificationResponse(feed); },
+        async post(endpoint, payload) { assert.equal(endpoint, 'notifications/read'); feed.find((item) => item.key === payload.key).read = true; return {}; },
+    };
+    const bell = await mountNotificationBell(api);
+    const page = await mountNotificationsPage(api);
+    try {
+        await settle();
+        assert.equal(calls, 2);
+        assert.equal(environment.intervals.size, 2);
+        bell.root.querySelector('.notification-bell-trigger').click(); await settle();
+        realtimeStatus(true); await settle();
+        assert.equal(environment.intervals.size, 0, 'WebSocket subscription stops fallback polls');
+        assert.match(page.root.textContent, /Փոփոխությունները ցուցադրվում են անմիջապես/);
+        feed.push(notificationItem('live-unread'));
+        window.dispatchEvent(new CustomEvent('lager:data-changed'));
+        window.dispatchEvent(new CustomEvent('lager:data-changed'));
+        await settle();
+        assert.equal(calls, 4, 'a burst fetches each visible notification component once');
+        assert.equal(bell.root.querySelector('.notification-badge').textContent, '2');
+        assert.match(page.root.textContent, /live-unread/);
+        assert.equal(environment.audio.started, 1, 'only the bell announces new unread items');
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(environment.audio.started, 1, 'duplicate invalidations do not repeat a tone');
+        page.root.querySelector('.notification-open').click(); await settle();
+        assert.equal(bell.root.querySelector('.notification-badge').textContent, '1');
+        assert.doesNotMatch(page.root.querySelector('.notification-list').textContent, /existing/);
+        assert.equal(environment.audio.started, 1, 'read synchronization stays silent');
+        realtimeStatus(false); await settle();
+        assert.equal(environment.intervals.size, 2, 'disconnect restores fallback polls');
+        assert.match(page.root.textContent, /պահուստային թարմացումը ակտիվ է/);
+        realtimeStatus(true); await settle();
+        assert.equal(environment.intervals.size, 0);
+    } finally { bell.unmount(); page.unmount(); environment.restore(); }
+    assert.equal(environment.intervals.size, 0);
+});
+
+test('realtime notification responses cannot restore an old session on either bell or page', async () => {
+    const environment = notificationEnvironment();
+    const requests = [];
+    const api = { get() { const request = deferred(); requests.push(request); return request.promise; } };
+    const bell = await mountNotificationBell(api);
+    const page = await mountNotificationsPage(api);
+    try {
+        requests[0].resolve(notificationResponse([notificationItem('initial')]));
+        requests[1].resolve(notificationResponse([notificationItem('initial')]));
+        await settle(); bell.root.querySelector('.notification-bell-trigger').click(); await settle();
+        realtimeStatus(true);
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(requests.length, 4);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { id: 2, permissions: { 'notifications.view': true } } }));
+        await settle(); assert.equal(requests.length, 6);
+        requests[4].resolve(notificationResponse([notificationItem('new-session')]));
+        requests[5].resolve(notificationResponse([notificationItem('new-session')]));
+        await settle();
+        assert.match(page.root.textContent, /new-session/);
+        assert.equal(bell.root.querySelector('.notification-badge').textContent, '1');
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(requests.length, 8, 'an unresolved old-session fetch cannot block the current live subscription');
+        requests[6].resolve(notificationResponse([notificationItem('new-session')]));
+        requests[7].resolve(notificationResponse([notificationItem('new-session')]));
+        requests[2].resolve(notificationResponse([notificationItem('stale-secret')]));
+        requests[3].resolve(notificationResponse([notificationItem('stale-secret')]));
+        await settle();
+        assert.doesNotMatch(page.root.textContent, /stale-secret/);
+        assert.equal(bell.root.querySelector('.notification-badge').textContent, '1');
+        assert.equal(environment.audio.started, 0);
+        bell.unmount(); page.unmount();
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(requests.length, 8);
+    } finally { if (bell.root.isConnected) bell.unmount(); if (page.root.isConnected) page.unmount(); environment.restore(); }
 });

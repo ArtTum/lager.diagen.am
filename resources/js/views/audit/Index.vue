@@ -1,4 +1,5 @@
 <script setup>
+import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import Pagination from '@/components/Pagination.vue';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -154,6 +155,7 @@ watch(search, () => {
 });
 onMounted(() => load());
 onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(timer); });
+useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: busy });
 </script>
 
 <template>
