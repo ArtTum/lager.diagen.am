@@ -24,6 +24,7 @@
 !/storage/backups/.gitkeep
 /storage/legacy-config/
 /storage/legacy-sessions/
+/storage/sessions/
 /storage/legacy-laravel-logs/
 /migration/storage/
 /storage/qa-run/
