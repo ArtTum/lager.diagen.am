@@ -85,7 +85,7 @@ const statusCharts = computed(() => [
                         <line :x1="x(selectedIndex)" :x2="x(selectedIndex)" :y1="plot.top" :y2="plot.bottom" class="chart-selected-line" />
                         <polyline v-for="item in visibleSeries" :key="item.key" :data-series="item.key" :points="points(item)" :stroke="item.color" fill="none" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
                         <circle v-for="item in visibleSeries" :key="`${item.key}-point`" :cx="x(selectedIndex)" :cy="y(item.values[selectedIndex])" r="4" :fill="item.color" stroke="white" stroke-width="2" />
-                        <template v-for="(date, index) in dates" :key="date"><text v-if="index % 3 === 0 || index === dates.length - 1" :x="x(index)" y="233" text-anchor="middle" class="chart-axis-label">{{ shortDate(date) }}</text></template>
+                        <template v-for="(date, index) in dates" :key="date"><text v-if="index === dates.length - 1 || (index % 3 === 0 && index < dates.length - 2)" :x="x(index)" y="233" text-anchor="middle" class="chart-axis-label">{{ shortDate(date) }}</text></template>
                     </g>
                     <rect v-for="(date, index) in dates" :key="`target-${date}`" :data-testid="`charts-day-${date}`" role="button" tabindex="0"
                         :x="x(index) - (plot.right - plot.left) / Math.max(1, dates.length - 1) / 2" :y="plot.top - 8"
