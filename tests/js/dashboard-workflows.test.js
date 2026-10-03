@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { parse, compileScript } from '@vue/compiler-sfc';
 import { transformSync } from 'esbuild';
 import { JSDOM } from 'jsdom';
+import { searchableSelect } from '../../resources/js/directives/searchableSelect.js';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://lager.test/' });
 for (const key of ['window', 'document', 'Document', 'HTMLElement', 'SVGElement', 'Element', 'Node', 'CustomEvent']) globalThis[key] = dom.window[key];
@@ -58,6 +59,7 @@ function mountDashboard(api, user = centralUser()) {
     document.body.append(root);
     const app = Vue.createApp(module.exports.default);
     app.component('AppIcon', { render: () => null });
+    app.directive('searchable-select', searchableSelect);
     app.mount(root);
     return { root, unmount() { app.unmount(); root.remove(); } };
 }
@@ -238,3 +240,44 @@ for (const [label, permission, fields, headers, values] of [
         } finally { view.unmount(); }
     });
 }
+
+test('dashboard searchable menu selects a branch, cleans up on unmount and starts a fresh dashboard at central', async () => {
+    const selected = deferred(); const calls = []; const user = centralUser();
+    let view = mountDashboard({ get(endpoint, { params }) {
+        assert.equal(endpoint, 'dashboard'); calls.push(structuredClone(params));
+        return calls.length === 1 ? Promise.resolve(snapshot()) : selected.promise;
+    } }, user);
+    try {
+        await settle();
+        const select = view.root.querySelector('#dashboard-location');
+        select.dispatchEvent(new dom.window.MouseEvent('pointerdown', { button: 0, bubbles: true, cancelable: true })); await settle();
+        const menu = document.querySelector('.searchable-select-menu');
+        assert.ok(menu, 'the styled menu opens instead of a native OS picker');
+        assert.equal(select.getAttribute('aria-expanded'), 'true');
+        assert.equal(menu.querySelector('[role="combobox"]').getAttribute('aria-label'), 'Պահեստ / մասնաճյուղ՝ որոնում');
+        const branch = [...menu.querySelectorAll('[role="option"]')].find((option) => option.textContent === 'Էրեբունի');
+        branch.click(); await settle();
+        assert.deepEqual(calls, [{}, { branch_id: 2 }]);
+        assert.equal(document.querySelector('.searchable-select-menu'), null);
+        assert.equal(select.getAttribute('aria-expanded'), 'false');
+        selected.resolve(snapshot(2, { units: 42 })); await settle();
+        assert.equal(select.value, '2');
+        assert.equal(select.selectedOptions[0].textContent, 'Էրեբունի');
+        assert.equal(heroLocation(view.root), 'Էրեբունի');
+        assert.equal(heroUnits(view.root), '42');
+        select.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); await settle();
+        assert.equal(document.querySelector('.searchable-select-menu [aria-selected="true"]').textContent, 'Էրեբունի');
+        view.unmount(); view = null;
+        assert.equal(document.querySelector('.searchable-select-menu'), null, 'unmount removes the body-level popup');
+        assert.equal(select.getAttribute('aria-expanded'), null);
+        assert.equal(select.getAttribute('aria-controls'), null);
+
+        const freshCalls = [];
+        view = mountDashboard({ async get(endpoint, { params }) { freshCalls.push(structuredClone(params)); return snapshot(); } }, user);
+        await settle();
+        assert.deepEqual(freshCalls, [{}], 'a fresh dashboard requests the account default instead of retaining the previous branch');
+        assert.equal(view.root.querySelector('select').value, '0');
+        assert.equal(heroLocation(view.root), 'Կենտրոնական պահեստ');
+        assert.equal(user.location_id, 0);
+    } finally { view?.unmount(); }
+});

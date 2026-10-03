@@ -97,8 +97,14 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
 
 <template>
     <div v-if="showLocationSelector" class="dashboard-scope-controls">
-        <label for="dashboard-location">Պահեստ / մասնաճյուղ</label>
-        <select id="dashboard-location" v-model.number="selectedLocationId" @change="changeLocation">
+        <div class="dashboard-scope-copy">
+            <span class="dashboard-scope-icon"><AppIcon name="branches" /></span>
+            <div>
+                <label for="dashboard-location">Պահեստ / մասնաճյուղ</label>
+                <p>Ցուցանիշները՝ ըստ ընտրված պահեստի</p>
+            </div>
+        </div>
+        <select id="dashboard-location" v-model.number="selectedLocationId" v-searchable-select class="form-control dashboard-location-select" @change="changeLocation">
             <option v-for="location in locationOptions" :key="location.id" :value="location.id">{{ location.name }}</option>
         </select>
     </div>
@@ -189,10 +195,20 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
 </template>
 
 <style scoped>
-.dashboard-scope-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
-.dashboard-scope-controls label { color: #637089; font-size: 12px; font-weight: 600; }
-.dashboard-scope-controls select { width: min(100%, 360px); min-height: 44px; }
+.dashboard-scope-controls { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 16px; padding: 16px 20px; border: 1px solid #e2e8f4; border-radius: 18px; background: linear-gradient(110deg, #fff, #fafbff); box-shadow: 0 4px 16px #17233d04; }
+.dashboard-scope-copy { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dashboard-scope-icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border: 1px solid #e0e5ff; border-radius: 13px; background: #eef1ff; color: #5568f3; }
+.dashboard-scope-icon .app-icon { width: 19px; height: 19px; }
+.dashboard-scope-controls label { display: block; color: #263653; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.dashboard-scope-copy p { margin: 4px 0 0; color: #8a97ad; font-size: 10px; line-height: 1.5; }
+.dashboard-location-select { flex: 0 1 420px; min-width: 0; height: 48px; border-color: #dce3f1; border-radius: 12px; background-color: #fff; font: inherit; font-size: 13px; font-weight: 600; color: #263653; }
+.dashboard-location-select:hover, .dashboard-location-select[aria-expanded="true"] { border-color: #9aa8ff; box-shadow: 0 0 0 3px #6879ff12; }
 .dashboard-load-status { margin: 0 0 12px; color: #637089; font-size: 12px; }
 .dashboard-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .dashboard-error button { margin-left: auto; white-space: nowrap; }
+@media (max-width: 640px) {
+    .dashboard-scope-controls { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; }
+    .dashboard-scope-icon { width: 36px; height: 36px; border-radius: 11px; }
+    .dashboard-location-select { flex: none; width: 100%; }
+}
 </style>
