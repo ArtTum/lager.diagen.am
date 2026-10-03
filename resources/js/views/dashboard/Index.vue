@@ -4,6 +4,7 @@ import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { RouterLink } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import DashboardCharts from '@/components/dashboard/DashboardCharts.vue';
 
 const data = ref(null);
 const user = ref(currentUser());
@@ -154,6 +155,8 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
             <AppIcon name="arrowRight" class="dashboard-secondary-arrow" />
         </RouterLink>
     </section>
+
+    <DashboardCharts v-if="data?.charts" :key="selectedLocationId" :charts="data.charts" :permissions="user?.permissions || {}" :location-name="selectedLocationName" />
 
     <section v-if="activity.length" class="dashboard-lower-grid">
         <article class="dashboard-panel dashboard-activity-chart">

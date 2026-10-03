@@ -30,7 +30,13 @@ function component(relativePath, dependencies = {}) {
     const script = compileScript(descriptor, { id: relativePath, inlineTemplate: true });
     const { code } = transformSync(script.content, { format: 'cjs', loader: 'js' });
     const module = { exports: {} };
-    new Function('require', 'module', 'exports', code)((name) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === '@/composables/useLiveRefresh' ? liveRefresh.exports : require(name), module, module.exports);
+    const loadDependency = (name) => {
+        if (Object.hasOwn(dependencies, name)) return dependencies[name];
+        if (name === '@/composables/useLiveRefresh') return liveRefresh.exports;
+        if (name.startsWith('@/') && name.endsWith('.vue')) return component(name.slice(2), dependencies);
+        return require(name);
+    };
+    new Function('require', 'module', 'exports', code)(loadDependency, module, module.exports);
     return module.exports.default;
 }
 

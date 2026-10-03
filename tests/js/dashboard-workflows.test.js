@@ -36,28 +36,54 @@ function snapshot(locationId = 0, values = {}, selectable = true) {
     } } };
 }
 
+function chartData(values = {}) {
+    const dates = Array.from({ length: 14 }, (_, index) => new Date(Date.UTC(2026, 8, 20 + index)).toISOString().slice(0, 10));
+    const series = Object.fromEntries(['receipts', 'issues', 'returns', 'transfers'].map((key) => [key,
+        Array.isArray(values[key]) ? values[key] : Array(dates.length).fill(values[key] ?? 0),
+    ]));
+    return {
+        activity_daily: { from: dates[0], to: dates.at(-1), timezone: 'Asia/Yerevan', dates, series },
+        stock_status: values.stock_status ?? { healthy: 0, low: 0, zero: 0 },
+        expiry_status: values.expiry_status ?? { safe: 0, expiring: 0, expired: 0, undated: 0 },
+    };
+}
+
 function deferred() {
     let resolve; let reject;
     const promise = new Promise((complete, fail) => { resolve = complete; reject = fail; });
     return { promise, resolve, reject };
 }
 
+function compileComponent(filename, dependencies) {
+    const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename: filename.pathname });
+    const script = compileScript(descriptor, { id: filename.pathname, inlineTemplate: true });
+    const module = { exports: {} };
+    const loadDependency = (name) => {
+        if (Object.hasOwn(dependencies, name)) return dependencies[name];
+        if (!name.startsWith('@/')) return require(name);
+        const target = new URL(`../../resources/js/${name.slice(2)}${/\.(vue|js)$/.test(name) ? '' : '.js'}`, import.meta.url);
+        if (name.endsWith('.vue')) return compileComponent(target, dependencies);
+        const dependency = { exports: {} };
+        const source = transformSync(readFileSync(target, 'utf8'), { format: 'cjs' }).code;
+        new Function('require', 'module', 'exports', source)(loadDependency, dependency, dependency.exports);
+        return dependency.exports;
+    };
+    new Function('require', 'module', 'exports', transformSync(script.content, { format: 'cjs' }).code)(loadDependency, module, module.exports);
+    return module.exports;
+}
+
 function mountDashboard(api, user = centralUser()) {
     const filename = new URL('../../resources/js/views/dashboard/Index.vue', import.meta.url);
-    const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename: filename.pathname });
-    const script = compileScript(descriptor, { id: 'dashboard-workflow', inlineTemplate: true });
-    const { code } = transformSync(script.content, { format: 'cjs' });
-    const module = { exports: {} };
     const dependencies = {
         '@/services/api': api,
         '@/router': { currentUser: () => user },
         '@/composables/useLiveRefresh': liveRefresh.exports,
         'vue-router': { RouterLink: { props: ['to'], render() { return Vue.h('a', { href: this.to }, this.$slots.default?.()); } } },
     };
-    new Function('require', 'module', 'exports', code)((name) => dependencies[name] || require(name), module, module.exports);
+    const module = compileComponent(filename, dependencies);
     const root = document.createElement('div');
     document.body.append(root);
-    const app = Vue.createApp(module.exports.default);
+    const app = Vue.createApp(module.default);
     app.component('AppIcon', { render: () => null });
     app.directive('searchable-select', searchableSelect);
     app.mount(root);
@@ -72,6 +98,9 @@ function choose(root, id) {
 }
 function heroLocation(root) { return root.querySelector('.dashboard-hero-meta span:last-child').textContent; }
 function heroUnits(root) { return root.querySelector('.dashboard-hero-panel strong')?.textContent; }
+function chart(root, key) { return root.querySelector(`[data-testid="charts-${key}"]`); }
+function selectedDayValues(root) { return [...root.querySelectorAll('.chart-day-summary b')].map((element) => element.textContent); }
+function chartBuckets(root, key) { return [...chart(root, key).querySelectorAll('[data-bucket] dd')].map((element) => element.firstChild.textContent); }
 
 test('central dashboard selection replaces all metrics and activity without showing old totals under the new location', async () => {
     const selected = deferred(); const calls = []; const user = centralUser();
@@ -280,4 +309,148 @@ test('dashboard searchable menu selects a branch, cleans up on unmount and start
         assert.equal(heroLocation(view.root), 'Կենտրոնական պահեստ');
         assert.equal(user.location_id, 0);
     } finally { view?.unmount(); }
+});
+
+test('dashboard charts render an empty fourteen-day period and zero status totals without invalid SVG geometry', async () => {
+    const view = mountDashboard({ async get() { return snapshot(0, { charts: chartData() }); } });
+    try {
+        await settle();
+        assert.equal(view.root.querySelectorAll('.chart-empty-state').length, 3);
+        assert.equal(chart(view.root, 'activity').querySelectorAll('[data-testid^="charts-day-"]').length, 14);
+        assert.deepEqual(selectedDayValues(view.root), ['0', '0', '0', '0']);
+        assert.deepEqual(chartBuckets(view.root, 'stock'), ['0', '0', '0']);
+        assert.deepEqual(chartBuckets(view.root, 'expiry'), ['0', '0', '0', '0']);
+        assert.deepEqual([...view.root.querySelectorAll('.chart-donut-center strong')].map((element) => element.textContent), ['0', '0']);
+        for (const svg of view.root.querySelectorAll('.dashboard-charts svg')) assert.doesNotMatch(svg.outerHTML, /NaN|Infinity/);
+        const day = chart(view.root, 'day-2026-09-20');
+        assert.equal(day.getAttribute('role'), 'button');
+        assert.equal(day.getAttribute('tabindex'), '0');
+        day.dispatchEvent(new dom.window.FocusEvent('focus')); await settle();
+        assert.equal(view.root.querySelector('.chart-day-summary > strong').textContent, '20.09.2026');
+        assert.deepEqual(selectedDayValues(view.root), ['0', '0', '0', '0']);
+    } finally { view.unmount(); }
+});
+
+test('dashboard hides every unauthorized chart domain even when a response contains all domain data', async () => {
+    const user = { ...centralUser(), permissions: { 'dashboard.view': true, 'branches.view': true } };
+    const leakedPayload = chartData({ receipts: 901, issues: 902, returns: 903, transfers: 904,
+        stock_status: { healthy: 905, low: 906, zero: 907 }, expiry_status: { safe: 908, expiring: 909, expired: 910, undated: 911 } });
+    const view = mountDashboard({ async get() { return snapshot(0, { charts: leakedPayload }); } }, user);
+    try {
+        await settle();
+        assert.equal(view.root.querySelector('.dashboard-charts'), null);
+        for (const key of ['activity', 'stock', 'expiry']) assert.equal(chart(view.root, key), null);
+        assert.equal(view.root.querySelector('[data-series], [data-testid^="charts-series-"]'), null);
+        assert.doesNotMatch(view.root.textContent, /90[1-9]|910|911/);
+    } finally { view.unmount(); }
+});
+
+test('dashboard permission changes remove unauthorized chart series and status domains from a fully populated response', async () => {
+    const fullData = chartData({ receipts: 5, issues: 62, returns: 7, transfers: 84,
+        stock_status: { healthy: 3, low: 2, zero: 1 }, expiry_status: { safe: 95, expiring: 96, expired: 97, undated: 98 } });
+    const user = centralUser(); const updated = deferred(); let calls = 0;
+    const view = mountDashboard({ get() { calls += 1; return calls === 1 ? Promise.resolve(snapshot(0, { charts: fullData })) : updated.promise; } }, user);
+    try {
+        await settle();
+        assert.ok(chart(view.root, 'expiry'));
+        assert.equal(chart(view.root, 'activity').querySelectorAll('[data-series]').length, 4);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: {
+            'dashboard.view': true, 'branches.view': true, 'receipts.view': true, 'returns.view': true, 'stock.view': true,
+        } } })); await settle();
+        assert.equal(view.root.querySelector('.dashboard-charts'), null, 'permission refresh clears the former snapshot while loading');
+        updated.resolve(snapshot(0, { charts: fullData })); await settle();
+        assert.equal(chart(view.root, 'expiry'), null);
+        assert.deepEqual(chartBuckets(view.root, 'stock'), ['3', '2', '1']);
+        assert.deepEqual([...chart(view.root, 'activity').querySelectorAll('[data-series]')].map((element) => element.getAttribute('data-series')), ['receipts', 'returns']);
+        assert.ok(chart(view.root, 'series-receipts'));
+        assert.ok(chart(view.root, 'series-returns'));
+        assert.equal(chart(view.root, 'series-issues'), null);
+        assert.equal(chart(view.root, 'series-transfers'), null);
+        assert.deepEqual(selectedDayValues(view.root), ['5', '7']);
+        assert.doesNotMatch(chart(view.root, 'day-2026-10-03').getAttribute('aria-label'), /Ելքեր|Տեղափոխումներ/);
+    } finally { view.unmount(); }
+});
+
+test('dashboard chart location changes clear old plots and reject a late response for the previous branch', async () => {
+    const earlier = deferred(); const latest = deferred(); const calls = [];
+    const view = mountDashboard({ get(endpoint, { params }) {
+        calls.push(structuredClone(params));
+        return calls.length === 1 ? Promise.resolve(snapshot(0, { charts: chartData({ receipts: 14 }) })) : calls.length === 2 ? earlier.promise : latest.promise;
+    } });
+    try {
+        await settle();
+        assert.deepEqual(selectedDayValues(view.root), ['14', '0', '0', '0']);
+        choose(view.root, 2); await settle();
+        assert.equal(view.root.querySelector('.dashboard-charts'), null);
+        choose(view.root, 3); await settle();
+        latest.resolve(snapshot(3, { charts: chartData({ receipts: 33, stock_status: { healthy: 30, low: 2, zero: 1 } }) })); await settle();
+        assert.deepEqual(calls, [{}, { branch_id: 2 }, { branch_id: 3 }]);
+        assert.equal(chart(view.root, 'activity').querySelector('.chart-location').textContent, 'Շենգավիթ');
+        assert.deepEqual(selectedDayValues(view.root), ['33', '0', '0', '0']);
+        assert.deepEqual(chartBuckets(view.root, 'stock'), ['30', '2', '1']);
+        earlier.resolve(snapshot(2, { charts: chartData({ receipts: 222, stock_status: { healthy: 222, low: 0, zero: 0 } }) })); await settle();
+        assert.equal(chart(view.root, 'activity').querySelector('.chart-location').textContent, 'Շենգավիթ');
+        assert.deepEqual(selectedDayValues(view.root), ['33', '0', '0', '0']);
+        assert.deepEqual(chartBuckets(view.root, 'stock'), ['30', '2', '1']);
+    } finally { view.unmount(); }
+});
+
+test('dashboard realtime refresh updates chart values in the current branch while retaining chart interaction state', async () => {
+    const live = deferred(); const calls = [];
+    const view = mountDashboard({ get(endpoint, { params }) {
+        calls.push(structuredClone(params));
+        return calls.length === 3 ? live.promise : Promise.resolve(snapshot(params.branch_id ?? 0, { charts: chartData({ receipts: calls.length, issues: 4, returns: 5, transfers: 6 }) }));
+    } });
+    try {
+        await settle(); choose(view.root, 2); await settle();
+        chart(view.root, 'series-issues').click(); await settle();
+        chart(view.root, 'day-2026-09-22').dispatchEvent(new dom.window.FocusEvent('focus')); await settle();
+        window.dispatchEvent(new CustomEvent('lager:data-changed'));
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.deepEqual(calls, [{}, { branch_id: 2 }, { branch_id: 2 }]);
+        live.resolve(snapshot(2, { charts: chartData({ receipts: 77, issues: 8, returns: 9, transfers: 10,
+            stock_status: { healthy: 11, low: 2, zero: 3 }, expiry_status: { safe: 15, expiring: 4, expired: 2, undated: 1 } }) })); await settle();
+        assert.equal(chart(view.root, 'activity').querySelector('.chart-location').textContent, 'Էրեբունի');
+        assert.equal(view.root.querySelector('.chart-day-summary > strong').textContent, '22.09.2026');
+        assert.deepEqual(selectedDayValues(view.root), ['77', '9', '10']);
+        assert.equal(chart(view.root, 'series-issues').getAttribute('aria-pressed'), 'false');
+        assert.equal(chart(view.root, 'activity').querySelector('[data-series="issues"]'), null);
+        assert.deepEqual(chartBuckets(view.root, 'stock'), ['11', '2', '3']);
+        assert.deepEqual(chartBuckets(view.root, 'expiry'), ['15', '4', '2', '1']);
+    } finally { view.unmount(); }
+});
+
+test('dashboard chart controls toggle plotted series and expose focused, hovered and keyboard-selected day values', async () => {
+    const charts = chartData({ receipts: Array.from({ length: 14 }, (_, index) => index + 1), issues: 2, returns: 3, transfers: 4 });
+    const view = mountDashboard({ async get() { return snapshot(0, { charts }); } });
+    try {
+        await settle();
+        const receipts = chart(view.root, 'series-receipts');
+        assert.equal(receipts.getAttribute('aria-pressed'), 'true');
+        assert.equal(receipts.querySelector('strong').textContent, '105');
+        receipts.click(); await settle();
+        assert.equal(receipts.getAttribute('aria-pressed'), 'false');
+        assert.equal(chart(view.root, 'activity').querySelector('[data-series="receipts"]'), null);
+        assert.deepEqual(selectedDayValues(view.root), ['2', '3', '4']);
+        receipts.click(); await settle();
+        assert.ok(chart(view.root, 'activity').querySelector('[data-series="receipts"]'));
+        const focused = chart(view.root, 'day-2026-09-22');
+        focused.dispatchEvent(new dom.window.FocusEvent('focus')); await settle();
+        assert.equal(view.root.querySelector('.chart-day-summary > strong').textContent, '22.09.2026');
+        assert.deepEqual(selectedDayValues(view.root), ['3', '2', '3', '4']);
+        assert.match(focused.getAttribute('aria-label'), /22\.09\.2026՝ Մուտքեր 3, Ելքեր 2, Վերադարձներ 3, Տեղափոխումներ 4/);
+        chart(view.root, 'day-2026-09-24').dispatchEvent(new dom.window.MouseEvent('mouseenter')); await settle();
+        assert.deepEqual(selectedDayValues(view.root), ['5', '2', '3', '4']);
+        chart(view.root, 'day-2026-09-25').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await settle();
+        assert.deepEqual(selectedDayValues(view.root), ['6', '2', '3', '4']);
+        chart(view.root, 'day-2026-09-26').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })); await settle();
+        assert.deepEqual(selectedDayValues(view.root), ['7', '2', '3', '4']);
+        for (const key of ['issues', 'returns', 'transfers']) chart(view.root, `series-${key}`).click();
+        await settle();
+        assert.equal(receipts.disabled, true, 'the final visible series remains readable');
+        receipts.click(); await settle();
+        assert.equal(receipts.getAttribute('aria-pressed'), 'true');
+        assert.deepEqual(selectedDayValues(view.root), ['7']);
+        assert.equal(view.root.querySelector('.chart-day-summary').getAttribute('aria-live'), 'polite');
+    } finally { view.unmount(); }
 });

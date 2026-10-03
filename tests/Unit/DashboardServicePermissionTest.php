@@ -206,6 +206,41 @@ class DashboardServicePermissionTest extends TestCase
         }
     }
 
+    public function test_selected_location_charts_only_keep_domains_the_actor_can_view(): void
+    {
+        $activity = [
+            'from' => '2026-09-17', 'to' => '2026-09-30', 'timezone' => 'Asia/Yerevan', 'dates' => ['2026-09-30'],
+            'series' => ['receipts' => [7], 'issues' => [8], 'returns' => [9], 'transfers' => [10]],
+        ];
+        $stock = ['healthy' => 3, 'low' => 2, 'zero' => 1];
+        $expiry = ['safe' => 4, 'expiring' => 3, 'expired' => 2, 'undated' => 1];
+        foreach ([
+            [[], []],
+            [['stock.view' => true], ['stock_status' => $stock]],
+            [['expiry.view' => true], ['expiry_status' => $expiry]],
+            [['receipts.view' => true], ['activity_daily' => [...$activity, 'series' => ['receipts' => [7]]]]],
+            [['movements.view' => true], ['activity_daily' => [...$activity, 'series' => ['issues' => [8]]]]],
+            [['returns.view' => true], ['activity_daily' => [...$activity, 'series' => ['returns' => [9]]]]],
+            [['transfers.view' => true], ['activity_daily' => [...$activity, 'series' => ['transfers' => [10]]]]],
+        ] as [$permissions, $expected]) {
+            $repository = Mockery::mock(DashboardRepository::class);
+            $repository->shouldReceive('summary')->once()->with(5, false)->andReturn([
+                'charts' => ['activity_daily' => $activity, 'stock_status' => $stock, 'expiry_status' => $expiry],
+                'stock_value' => 999,
+            ]);
+
+            $summary = (new DashboardService($repository))->summary($this->actor(0, ['branches.view' => true] + $permissions), 5);
+
+            self::assertSame(['id' => 5, 'name' => 'Գյումրի'], $summary['selected_location']);
+            self::assertArrayNotHasKey('stock_value', $summary);
+            if ($expected === []) {
+                self::assertArrayNotHasKey('charts', $summary);
+            } else {
+                self::assertSame($expected, $summary['charts']);
+            }
+        }
+    }
+
     private function actor(int $location, array $permissions): User
     {
         $actor = Mockery::mock(User::class);

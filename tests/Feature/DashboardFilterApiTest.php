@@ -43,7 +43,7 @@ class DashboardFilterApiTest extends TestCase
     protected function tearDown(): void
     {
         Carbon::setTestNow();
-        foreach (['transfers', 'returns', 'movements', 'receipts', 'stock_requests', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
+        foreach (['transfers', 'returns', 'movement_corrections', 'movements', 'receipts', 'stock_requests', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
             Schema::dropIfExists($table);
         }
         parent::tearDown();
@@ -69,6 +69,17 @@ class DashboardFilterApiTest extends TestCase
             ->assertJsonPath('data.unapproved_requests', 1)
             ->assertJsonPath('data.awaiting_receipt_requests', 1)
             ->assertJsonPath('data.today', ['receipts' => 1, 'issues' => 1, 'returns' => 1, 'transfers' => 2])
+            ->assertJsonPath('data.charts.stock_status', ['healthy' => 1, 'low' => 1, 'zero' => 0])
+            ->assertJsonPath('data.charts.expiry_status', ['safe' => 0, 'expiring' => 1, 'expired' => 1, 'undated' => 0])
+            ->assertJsonPath('data.charts.activity_daily.from', '2026-09-20')
+            ->assertJsonPath('data.charts.activity_daily.to', '2026-10-03')
+            ->assertJsonPath('data.charts.activity_daily.timezone', 'Asia/Yerevan')
+            ->assertJsonCount(14, 'data.charts.activity_daily.dates')
+            ->assertJsonPath('data.charts.activity_daily.series.receipts.12', 1)
+            ->assertJsonPath('data.charts.activity_daily.series.receipts.13', 1)
+            ->assertJsonPath('data.charts.activity_daily.series.issues.13', 1)
+            ->assertJsonPath('data.charts.activity_daily.series.returns.13', 0)
+            ->assertJsonPath('data.charts.activity_daily.series.transfers.13', 0)
             ->assertJsonMissingPath('data.branches')
             ->assertJsonCount(3, 'data.location_options')
             ->assertJsonPath('data.location_options.0.id', 0)
@@ -79,6 +90,9 @@ class DashboardFilterApiTest extends TestCase
                 ->assertJsonPath('data.selected_location.id', 0)
                 ->assertJsonPath('data.units', 99)
                 ->assertJsonPath('data.stock_value', 9900)
+                ->assertJsonPath('data.charts.stock_status', ['healthy' => 1, 'low' => 0, 'zero' => 1])
+                ->assertJsonPath('data.charts.expiry_status', ['safe' => 1, 'expiring' => 0, 'expired' => 0, 'undated' => 0])
+                ->assertJsonPath('data.charts.activity_daily.series.receipts.13', 0)
                 ->assertJsonCount(2, 'data.branches');
         }
     }
@@ -122,7 +136,13 @@ class DashboardFilterApiTest extends TestCase
             ->assertJsonPath('data.today', ['issues' => 1])
             ->assertJsonMissingPath('data.stock_value')
             ->assertJsonMissingPath('data.expired_lots')
-            ->assertJsonMissingPath('data.expiring_lots');
+            ->assertJsonMissingPath('data.expiring_lots')
+            ->assertJsonPath('data.charts.stock_status', ['healthy' => 1, 'low' => 1, 'zero' => 0])
+            ->assertJsonPath('data.charts.activity_daily.series.issues.13', 1)
+            ->assertJsonMissingPath('data.charts.activity_daily.series.receipts')
+            ->assertJsonMissingPath('data.charts.activity_daily.series.returns')
+            ->assertJsonMissingPath('data.charts.activity_daily.series.transfers')
+            ->assertJsonMissingPath('data.charts.expiry_status');
     }
 
     public function test_admin_selection_rejects_unknown_inactive_and_database_central_ids(): void
@@ -250,7 +270,12 @@ class DashboardFilterApiTest extends TestCase
             $table->string('type');
             $table->unsignedBigInteger('from_location')->nullable();
             $table->unsignedBigInteger('to_location')->nullable();
+            $table->decimal('qty', 12, 3)->default(1);
             $table->dateTime('happened_at');
+        });
+        Schema::create('movement_corrections', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('movement_id');
         });
         Schema::create('returns', function (Blueprint $table): void {
             $table->id();

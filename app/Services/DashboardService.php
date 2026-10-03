@@ -74,10 +74,23 @@ class DashboardService
         foreach ($activityPermissions as $activity => $permission) {
             if (! $can($permission)) {
                 unset($summary['today'][$activity]);
+                unset($summary['charts']['activity_daily']['series'][$activity]);
             }
         }
         if (empty($summary['today'])) {
             unset($summary['today']);
+        }
+        if (empty($summary['charts']['activity_daily']['series'])) {
+            unset($summary['charts']['activity_daily']);
+        }
+        if (! $can('stock.view')) {
+            unset($summary['charts']['stock_status']);
+        }
+        if (! $can('expiry.view')) {
+            unset($summary['charts']['expiry_status']);
+        }
+        if (empty($summary['charts'])) {
+            unset($summary['charts']);
         }
 
         $locationOptions = [];
