@@ -166,7 +166,7 @@ const statusCharts = computed(() => [
 .chart-status-legend dd { display: flex; align-items: center; gap: 8px; margin: 0; color: #354664; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .chart-status-legend dd small { width: 30px; color: #a0adbe; font-size: 9px; font-weight: 400; text-align: right; }
 @media (max-width: 1100px) { .chart-status-body { gap: 12px; padding: 15px; } .chart-donut { flex-basis: 140px; width: 140px; height: 140px; } }
-@media (max-width: 800px) { .chart-status-grid { grid-template-columns: 1fr; } .chart-status-body { gap: 20px; } .chart-donut { flex-basis: 160px; width: 160px; height: 160px; } }
+@media (max-width: 800px) { .chart-status-grid { grid-template-columns: 1fr; } .chart-status-body { gap: 20px; } .chart-donut { flex-basis: 160px; width: 160px; height: 160px; } .chart-axis-label { font-size: 15px; } }
 @media (max-width: 480px) {
     .chart-period { font-size: 9px; padding: 6px; }
     .chart-series-controls { gap: 7px; padding: 14px 12px 4px; }
@@ -174,6 +174,7 @@ const statusCharts = computed(() => [
     .chart-series-controls button > span:nth-child(2) { margin-right: auto; }
     .chart-series-controls strong { margin-left: 0; }
     .chart-plot { padding: 12px 10px 0; }
+    .chart-axis-label { font-size: 20px; }
     .chart-day-summary { margin: 7px 12px 12px; gap: 9px 12px; }
     .chart-day-summary > strong { flex-basis: 100%; }
     .chart-status-body { gap: 10px; padding: 12px; }
