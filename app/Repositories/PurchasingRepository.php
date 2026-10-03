@@ -22,7 +22,8 @@ class PurchasingRepository
         ];
         if ($forReceipts) {
             $data['orders'] = PurchaseOrder::query()->with(['supplier', 'items' => fn ($query) => $query->with('product')->whereColumn('received_qty', '<', 'ordered_qty')])
-                ->where('status', 'approved')->orderByDesc('id')->get()->map(static function (PurchaseOrder $order): array {
+                ->where('status', 'approved')->whereHas('items', fn ($query) => $query->whereColumn('received_qty', '<', 'ordered_qty'))
+                ->orderByDesc('id')->get()->map(static function (PurchaseOrder $order): array {
                     return [
                         'id' => $order->id,
                         'order_no' => $order->order_no,

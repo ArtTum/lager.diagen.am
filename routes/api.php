@@ -68,6 +68,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function (): void {
     Route::post('/purchases/{order}/approve', [PurchaseController::class, 'approve'])->middleware('permission:purchases.approve');
     Route::post('/receipts', [PurchaseController::class, 'receive'])->middleware('permission:receipts.create');
     Route::get('/catalog/stock/options', [CatalogController::class, 'options'])->defaults('kind', 'stock')->middleware('permission:stock.view');
+    Route::get('/categories', [CatalogController::class, 'categories'])->middleware('permission:products.view');
     Route::post('/categories', [CatalogController::class, 'createCategory'])->middleware('permission:products.create');
     Route::delete('/categories/{category}', [CatalogController::class, 'deleteCategory'])->middleware('permission:products.delete');
     Route::get('/products/{product}/history', [ProductTraceController::class, 'show'])->middleware('permission:products.view');

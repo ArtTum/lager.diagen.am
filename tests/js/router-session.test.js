@@ -42,6 +42,7 @@ function routerEnvironment(api) {
     window.location = { reload: () => { reloads += 1; } };
     const replacements = [];
     let guard;
+    let configuredRoutes;
     const router = {
         currentRoute: { value: { path: '/stock' } },
         beforeEach: (callback) => { guard = callback; },
@@ -49,12 +50,24 @@ function routerEnvironment(api) {
     };
     const content = readFileSync(new URL('../../resources/js/router/index.js', import.meta.url), 'utf8');
     const context = loadScript(content, {
-        'vue-router': { createRouter: () => router, createWebHistory: () => ({}) },
+        'vue-router': { createRouter: ({ routes }) => { configuredRoutes = routes; return router; }, createWebHistory: () => ({}) },
         '@/services/api': api,
         './access': access,
     });
-    return { ...context, guard: (to = { meta: { permission: 'stock.view' } }) => guard(to), replacements, reloads: () => reloads };
+    return { ...context, routes: configuredRoutes, guard: (to = { meta: { permission: 'stock.view' } }) => guard(to), replacements, reloads: () => reloads };
 }
+
+test('the product types route uses existing product viewing permission and preserves the products landing page', async () => {
+    const context = routerEnvironment({ get: async () => { throw new Error('Cached user should not reload'); } });
+    const categories = context.routes.find(route => route.path === '/categories');
+    assert.equal(categories.meta.permission, 'products.view');
+    localStorage.setItem('lagerAuthToken', 'test-session');
+    context.setCurrentUser({ id: 1, permissions: { 'products.view': true } });
+    assert.equal(await context.guard(categories), true);
+    assert.equal(access.firstAvailablePath(context.routes, { 'products.view': true }), '/products');
+    context.setCurrentUser({ id: 2, permissions: { 'stock.view': true } });
+    assert.equal(await context.guard(categories), access.firstAvailablePath(context.routes, { 'stock.view': true }));
+});
 
 const account = (name) => ({ id: name, name, permissions: { 'stock.view': true } });
 

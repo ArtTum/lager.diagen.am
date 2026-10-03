@@ -44,7 +44,7 @@ class PageDataRepository
 
         $definitions = [
             'branches' => [['name' => 'Մասնաճյուղ', 'code' => 'Կոդ', 'address' => 'Հասցե', 'manager' => 'Պատասխանատու', 'phone' => 'Հեռախոս', 'active' => 'Կարգավիճակ'], $branches->when($location > 0, fn ($query) => $query->where('branches.id', $location)), ['branches.name', 'branches.code', 'branches.address', 'branches.manager', 'branches.phone']],
-            'products' => [['code' => 'Կոդ', 'name' => 'Ապրանք', 'category' => 'Խումբ', 'unit' => 'Միավոր', 'min_qty' => 'MIN', 'active' => 'Կարգավիճակ'],
+            'products' => [['code' => 'Կոդ', 'name' => 'Ապրանք', 'category' => 'Ապրանքի տեսակ', 'unit' => 'Միավոր', 'min_qty' => 'MIN', 'active' => 'Կարգավիճակ'],
                 $products->when(trim((string) ($filters['barcode'] ?? '')) !== '', function ($query) use ($filters): void {
                     $barcode = trim((string) $filters['barcode']);
                     $query->where(fn ($match) => $match->where('products.barcode', $barcode)->orWhere('products.code', $barcode));
@@ -61,7 +61,9 @@ class PageDataRepository
                     ->selectRaw("CASE WHEN stock_lots.location_id = 0 THEN 'Կենտրոնական պահեստ' ELSE COALESCE(b.name, 'Անհայտ պահեստ') END as location")
                     ->selectRaw('DATEDIFF(stock_lots.expires_on, ?) as days_left', [now()->toDateString()])->orderBy('stock_lots.expires_on'), ['p.code', 'p.name', 'stock_lots.lot_no', 'b.name', 's.name']],
             'purchases' => [['order_no' => 'Պատվեր', 'supplier' => 'Մատակարար', 'status' => 'Կարգավիճակ', 'ordered_on' => 'Պատվերի օր', 'expected_on' => 'Սպասվող օր', 'created_at' => 'Ստեղծվել է'],
-                PurchaseOrder::query()->join('suppliers as s', 's.id', '=', 'purchase_orders.supplier_id')->select('purchase_orders.id', 'purchase_orders.order_no', 's.name as supplier', 'purchase_orders.status', 'purchase_orders.ordered_on', 'purchase_orders.expected_on', 'purchase_orders.created_at')->orderByDesc('purchase_orders.id'), ['purchase_orders.order_no', 's.name', 'purchase_orders.status']],
+                PurchaseOrder::query()->join('suppliers as s', 's.id', '=', 'purchase_orders.supplier_id')->select('purchase_orders.id', 'purchase_orders.order_no', 's.name as supplier', 'purchase_orders.status', 'purchase_orders.ordered_on', 'purchase_orders.expected_on', 'purchase_orders.created_at')
+                    ->withExists(['items as has_remaining_items' => fn ($items) => $items->whereColumn('purchase_order_items.received_qty', '<', 'purchase_order_items.ordered_qty')])
+                    ->orderByDesc('purchase_orders.id'), ['purchase_orders.order_no', 's.name', 'purchase_orders.status']],
             'receipts' => [['receipt_no' => 'Մուտք', 'supplier' => 'Մատակարար', 'invoice_no' => 'Հաշիվ', 'received_on' => 'Ստացման օր', 'note' => 'Նշում'],
                 Receipt::query()->join('suppliers as s', 's.id', '=', 'receipts.supplier_id')->select('receipts.id', 'receipts.receipt_no', 's.name as supplier', 'receipts.invoice_no', 'receipts.received_on', 'receipts.note')->orderByDesc('receipts.id'), ['receipts.receipt_no', 's.name', 'receipts.invoice_no']],
             'requests' => [['request_no' => 'Պահանջագիր', 'branch' => 'Մասնաճյուղ', 'status' => 'Կարգավիճակ', 'urgency' => 'Հրատապություն', 'created_at' => 'Ստեղծվել է'],

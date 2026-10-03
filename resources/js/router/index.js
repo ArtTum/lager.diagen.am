@@ -7,6 +7,7 @@ const Dashboard = () => import('@/views/dashboard/Index.vue');
 const Suppliers = () => import('@/views/suppliers/Index.vue');
 const PageTable = () => import('@/views/PageTable.vue');
 const CatalogTable = () => import('@/views/CatalogTable.vue');
+const Categories = () => import('@/views/categories/Index.vue');
 const Transfers = () => import('@/views/transfers/Index.vue');
 const Requests = () => import('@/views/requests/Index.vue');
 const Purchasing = () => import('@/views/purchasing/Index.vue');
@@ -42,6 +43,7 @@ const routes = [
         ['reports', 'Հաշվետվություններ'], ['users', 'Օգտատերեր'], ['roles', 'Դերեր և իրավունքներ'],
         ['audit', 'Գործողությունների պատմություն'],
     ].map(([path, title]) => ({ path: `/${path}`, component: path === 'transfers' ? Transfers : path === 'requests' ? Requests : ['purchases', 'receipts'].includes(path) ? Purchasing : path === 'stock' ? Stock : path === 'inventory' ? Inventory : path === 'returns' ? Returns : path === 'movements' ? Movements : path === 'notifications' ? Notifications : path === 'reports' ? Reports : path === 'expiry' ? Expiry : path === 'audit' ? Audit : (['branches', 'products', 'users', 'roles'].includes(path) ? CatalogTable : PageTable), meta: { title, permission: `${path}.view` } })),
+    { path: '/categories', component: Categories, meta: { title: 'Ապրանքի տեսակներ', permission: 'products.view' } },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
 ];
 

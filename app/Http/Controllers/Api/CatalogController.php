@@ -91,6 +91,11 @@ class CatalogController extends Controller
         ], 201);
     }
 
+    public function categories(): JsonResponse
+    {
+        return response()->json(['data' => $this->catalog->categories()]);
+    }
+
     public function deleteCategory(Request $request, string $category): JsonResponse
     {
         $this->catalog->deleteCategory($request->user(), (string) $request->ip(), (int) $category);

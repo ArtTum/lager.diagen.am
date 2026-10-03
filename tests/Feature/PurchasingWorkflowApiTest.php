@@ -111,6 +111,50 @@ class PurchasingWorkflowApiTest extends TestCase
         self::assertSame(2, Movement::query()->count());
     }
 
+    public function test_receipt_options_offer_only_approved_orders_with_outstanding_items(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $actor = $this->persistedActor($central, 'receiver', 'receiver-options@example.test', ['receipts.view']);
+        $supplier = Supplier::query()->create(['name' => 'Receipt options supplier', 'active' => true]);
+        $products = collect(['COMPLETE', 'OUTSTANDING'])->map(fn (string $code): Product => Product::query()->create([
+            'code' => $code, 'name' => $code, 'unit' => 'հատ', 'purchase_price' => 100,
+            'lot_control' => true, 'expiry_control' => true, 'active' => true,
+        ]));
+        $orders = [];
+        foreach ([
+            ['PARTIAL', 'approved', [[0, 5, 5], [1, 3, 2.999]]],
+            ['FULL', 'approved', [[0, 5, 5]]],
+            ['EMPTY', 'approved', []],
+            ['PENDING', 'pending', [[0, 5, 0]]],
+            ['CANCELLED', 'cancelled', [[0, 5, 0]]],
+        ] as [$number, $status, $items]) {
+            $orders[$number] = PurchaseOrder::query()->create([
+                'order_no' => $number, 'supplier_id' => $supplier->id, 'status' => $status,
+                'ordered_on' => now()->toDateString(), 'created_by' => $actor->id,
+            ]);
+            foreach ($items as [$productIndex, $ordered, $received]) {
+                PurchaseOrderItem::query()->create([
+                    'purchase_order_id' => $orders[$number]->id, 'product_id' => $products[$productIndex]->id,
+                    'ordered_qty' => $ordered, 'received_qty' => $received, 'unit_cost' => 100,
+                ]);
+            }
+        }
+
+        $this->actingAs($actor, 'sanctum')->getJson('/api/purchasing/receipts/options')->assertOk()
+            ->assertJsonCount(1, 'data.orders')
+            ->assertJsonPath('data.orders.0.id', $orders['PARTIAL']->id)
+            ->assertJsonCount(1, 'data.orders.0.items')
+            ->assertJsonPath('data.orders.0.items.0.code', $products[1]->code)
+            ->assertJsonPath('data.orders.0.items.0.ordered_qty', 3)
+            ->assertJsonPath('data.orders.0.items.0.received_qty', 2.999);
+
+        PurchaseOrderItem::query()->where('purchase_order_id', $orders['PARTIAL']->id)
+            ->where('product_id', $products[1]->id)->update(['received_qty' => 3]);
+        $this->getJson('/api/purchasing/receipts/options')->assertOk()->assertJsonCount(0, 'data.orders');
+        self::assertSame('approved', $orders['PARTIAL']->fresh()->status);
+        self::assertSame('approved', $orders['FULL']->fresh()->status);
+    }
+
     public function test_supplier_purchase_to_branch_consumption_and_stock_report_work_as_one_api_lifecycle(): void
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);

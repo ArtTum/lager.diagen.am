@@ -57,6 +57,11 @@ function list(data, columns = { name: 'Name' }, extra = {}) {
     return { data: { data, columns, pagination: { total: data.length, per_page: 15, current_page: 1, last_page: 1 }, ...extra } };
 }
 
+function inventorySnapshot(id = 1, overrides = {}) {
+    return { id, inventory_no: `INVENTORY-${id}`, status: 'counted', started_by: 8, location: { name: 'Erebuni' }, starter: { name: 'Counter' },
+        lines: [{ id: id * 10, product: { code: `ITEM-${id}`, name: 'Reagent', unit: 'հատ' }, lot: { lot_no: 'LOT-A' }, expected_qty: '5.000', counted_qty: '3.000', difference_reason: 'Breakage' }], ...overrides };
+}
+
 async function mountView(relativePath, path, api, user = {}, dependencies = {}) {
     const definition = component(relativePath, {
         '@/components/Pagination.vue': stub, '@/components/ExportActions.vue': stub,
@@ -525,7 +530,11 @@ test('independent inventory approval excludes the current starter and still requ
         { id: 4, inventory_no: 'PEER-OPEN', status: 'open', started_by: 8, lines_count: 1, counted_lines_count: 0 },
     ];
     for (const allowed of [true, false]) {
-        const view = await mountView('views/inventory/Index.vue', '/inventory', { async get() { return list(records); } }, {
+        const view = await mountView('views/inventory/Index.vue', '/inventory', { async get(endpoint) {
+            if (endpoint === 'inventory') return list(records);
+            const row = records.find((record) => endpoint === `inventory/${record.id}`);
+            return { data: { data: { session: { ...row, lines: [{ id: 10, product: { code: 'PRODUCT', name: 'Item', unit: 'հատ' }, expected_qty: '5.000', counted_qty: '3.000', difference_reason: 'Breakage' }] } } } };
+        } }, {
             id: 7, role: { name: allowed ? 'admin' : 'viewer' }, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': allowed },
         });
         try {
@@ -539,10 +548,263 @@ test('independent inventory approval excludes the current starter and still requ
             }
             if (allowed) {
                 view.root.querySelector('tbody .primary-button').click(); await settle();
+                assert.match(view.root.querySelector('.inventory-inspection-modal').textContent, /PEER-COUNTED/);
+                view.root.querySelector('.inventory-inspection-modal .primary-button').click(); await settle();
                 assert.match(view.root.querySelector('.confirm-card').textContent, /PEER-COUNTED/);
             }
         } finally { view.unmount(); }
     }
+});
+
+test('inventory viewers inspect quantities and reasons without edit or approval permissions', async () => {
+    const snapshot = inventorySnapshot();
+    const calls = [];
+    const view = await mountView('views/inventory/Index.vue', '/inventory', {
+        async get(endpoint) {
+            calls.push(endpoint);
+            return endpoint === 'inventory' ? list([{ ...snapshot, lines_count: 1, counted_lines_count: 1 }]) : { data: { data: { session: snapshot } } };
+        },
+        async post() { assert.fail('inspection must not write'); },
+        async put() { assert.fail('inspection must not write'); },
+    }, { id: 7, location_id: 2, permissions: { 'inventory.view': true } });
+    try {
+        await settle();
+        assert.equal(view.root.querySelector('tbody button:not(.inventory-inspection-trigger)'), null);
+        view.root.querySelector('.inventory-inspection-trigger').click(); await settle();
+        const detail = view.root.querySelector('.inventory-inspection-modal');
+        assert.match(detail.textContent, /INVENTORY-1/);
+        const cells = [...detail.querySelectorAll('tbody td')].map((cell) => cell.textContent);
+        assert.deepEqual(cells.slice(1), ['5.000', '3.000', '-2', 'հատ', 'Breakage']);
+        assert.equal(detail.querySelector('form,input,select,textarea'), null);
+        assert.equal(detail.querySelector('.primary-button'), null);
+        assert.deepEqual(calls, ['inventory', 'inventory/1']);
+    } finally { view.unmount(); }
+});
+
+test('an inventory approver loads a complete comparison before explicit independent confirmation', async () => {
+    const pending = deferred(); const writes = [];
+    const snapshot = inventorySnapshot();
+    const view = await mountView('views/inventory/Index.vue', '/inventory', {
+        async get(endpoint) {
+            return endpoint === 'inventory' ? list([{ ...snapshot, lines_count: 1, counted_lines_count: 1 }]) : pending.promise;
+        },
+        async post(endpoint) { writes.push(endpoint); return {}; },
+        async put() { assert.fail('approval inspection must not edit counts'); },
+    }, { id: 7, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': true } });
+    try {
+        await settle(); view.root.querySelector('tbody .primary-button').click(); await settle();
+        assert.ok(view.root.querySelector('.inventory-inspection-modal'));
+        assert.equal(view.root.querySelector('.confirm-card'), null);
+        assert.equal(view.root.querySelector('.inventory-inspection-modal .primary-button'), null);
+        assert.deepEqual(writes, []);
+        pending.resolve({ data: { data: { session: snapshot } } }); await settle();
+        assert.match(view.root.querySelector('.inventory-inspection-modal tbody').textContent, /5\.000.*3\.000.*-2.*Breakage/s);
+        view.root.querySelector('.inventory-inspection-modal .primary-button').click(); await settle();
+        assert.ok(view.root.querySelector('.confirm-card'));
+        assert.deepEqual(writes, []);
+        view.root.querySelector('.confirm-card .primary-button').click(); await settle();
+        assert.deepEqual(writes, ['inventory/1/approve']);
+        assert.equal(view.root.querySelector('.inventory-inspection-modal'), null);
+    } finally { view.unmount(); }
+});
+
+test('inventory inspection prevents approval for incomplete counts, missing reasons, own sessions and closed sessions', async () => {
+    for (const scenario of [
+        { label: 'missing line', lines_count: 2 },
+        { label: 'uncounted line', line: { counted_qty: null } },
+        { label: 'missing reason', line: { difference_reason: '' } },
+        { label: 'missing product details', line: { product: null } },
+        { label: 'own session', session: { started_by: 7 } },
+        { label: 'closed since list load', session: { status: 'closed' } },
+    ]) {
+        const snapshot = inventorySnapshot(1, scenario.session);
+        if (scenario.line) snapshot.lines[0] = { ...snapshot.lines[0], ...scenario.line };
+        const view = await mountView('views/inventory/Index.vue', '/inventory', {
+            async get(endpoint) {
+                return endpoint === 'inventory' ? list([{ id: 1, inventory_no: 'INVENTORY-1', status: 'counted', started_by: 8, lines_count: scenario.lines_count || 1, counted_lines_count: 1 }]) : { data: { data: { session: snapshot } } };
+            },
+            async post() { assert.fail(`${scenario.label} must not approve`); },
+        }, { id: 7, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': true } });
+        try {
+            await settle(); view.root.querySelector('.inventory-inspection-trigger').click(); await settle();
+            assert.ok(view.root.querySelector('.inventory-inspection-modal'), scenario.label);
+            assert.equal(view.root.querySelector('.inventory-inspection-modal .primary-button'), null, scenario.label);
+            assert.equal(view.root.querySelector('.confirm-card'), null, scenario.label);
+        } finally { view.unmount(); }
+    }
+});
+
+test('inventory changes invalidate approval and an outdated refresh cannot restore it', async () => {
+    const pending = deferred(); let detailLoads = 0;
+    const snapshot = inventorySnapshot();
+    const view = await mountView('views/inventory/Index.vue', '/inventory', {
+        async get(endpoint) {
+            if (endpoint === 'inventory') return list([{ ...snapshot, lines_count: 1, counted_lines_count: 1 }]);
+            detailLoads += 1;
+            if (detailLoads === 2) return pending.promise;
+            const session = detailLoads === 3 ? inventorySnapshot(1, { lines: [{ ...snapshot.lines[0], counted_qty: '1.000', difference_reason: 'Updated count' }] }) : snapshot;
+            return { data: { data: { session } } };
+        },
+        async post() { assert.fail('inspection refresh must not write'); },
+    }, { id: 7, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': true } });
+    try {
+        await settle(); view.root.querySelector('.inventory-inspection-trigger').click(); await settle();
+        view.root.querySelector('.inventory-inspection-modal .primary-button').click(); await settle();
+        assert.ok(view.root.querySelector('.confirm-card'));
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(view.root.querySelector('.confirm-card'), null);
+        assert.equal(view.root.querySelector('.inventory-inspection-modal .primary-button'), null);
+        assert.ok(view.root.querySelector('.inventory-inspection-modal .notice-warning'));
+        view.root.querySelector('.inventory-inspection-modal .modal-actions .secondary-button').click(); await settle();
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        pending.resolve({ data: { data: { session: snapshot } } }); await settle();
+        assert.equal(view.root.querySelector('.inventory-inspection-modal .primary-button'), null);
+        view.root.querySelector('.inventory-inspection-modal .modal-actions .secondary-button').click(); await settle();
+        assert.match(view.root.querySelector('.inventory-inspection-modal tbody').textContent, /1\.000.*-4.*Updated count/s);
+        assert.ok(view.root.querySelector('.inventory-inspection-modal .primary-button'));
+    } finally { view.unmount(); }
+});
+
+test('inventory detail loads discard old selections and session changes and keep failed loads unapprovable', async () => {
+    const first = deferred(); const second = deferred();
+    const user = { id: 7, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': true } };
+    const view = await mountView('views/inventory/Index.vue', '/inventory', {
+        async get(endpoint) {
+            if (endpoint === 'inventory') return list([1, 2, 3].map((id) => ({ ...inventorySnapshot(id), lines_count: 1, counted_lines_count: 1 })));
+            if (endpoint === 'inventory/3') throw { response: { status: 403, data: { message: 'Access denied' } } };
+            return endpoint === 'inventory/1' ? first.promise : second.promise;
+        },
+        async post() { assert.fail('inspection must not write'); },
+    }, user);
+    try {
+        await settle(); view.root.querySelectorAll('.inventory-inspection-trigger')[0].click(); await settle();
+        view.root.querySelectorAll('.inventory-inspection-trigger')[1].click(); await settle();
+        second.resolve({ data: { data: { session: inventorySnapshot(2) } } }); await settle();
+        first.resolve({ data: { data: { session: inventorySnapshot(1) } } }); await settle();
+        assert.match(view.root.querySelector('.inventory-inspection-modal').textContent, /INVENTORY-2/);
+        assert.doesNotMatch(view.root.querySelector('.inventory-inspection-modal').textContent, /INVENTORY-1/);
+        view.root.querySelectorAll('.inventory-inspection-trigger')[2].click(); await settle();
+        assert.match(view.root.querySelector('.inventory-inspection-modal [role="alert"]').textContent, /Access denied/);
+        assert.equal(view.root.querySelector('.inventory-inspection-modal .primary-button'), null);
+        assert.equal(view.root.querySelector('.inventory-inspection-modal table'), null);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 9, location_id: 3 } })); await settle();
+        assert.equal(view.root.querySelector('.inventory-inspection-modal'), null);
+    } finally { view.unmount(); }
+});
+
+test('an inventory detail response after closure or an access change cannot restore private data or approval', async () => {
+    for (const endInspection of ['close', 'session', 'permission']) {
+        const pending = deferred();
+        const snapshot = inventorySnapshot();
+        const user = { id: 7, location_id: 0, permissions: { 'inventory.view': true, 'inventory.approve': true } };
+        const view = await mountView('views/inventory/Index.vue', '/inventory', {
+            async get(endpoint) { return endpoint === 'inventory' ? list([{ ...snapshot, lines_count: 1, counted_lines_count: 1 }]) : pending.promise; },
+            async post() { assert.fail('an obsolete detail load must not approve'); },
+        }, user);
+        try {
+            await settle(); view.root.querySelector('.inventory-inspection-trigger').click(); await settle();
+            if (endInspection === 'close') view.root.querySelector('.inventory-inspection-modal .close-button').click();
+            else window.dispatchEvent(new CustomEvent('lager:user', { detail: endInspection === 'session' ? { ...user, id: 9, location_id: 3 } : { ...user, permissions: {} } }));
+            await settle(); pending.resolve({ data: { data: { session: snapshot } } }); await settle();
+            assert.equal(view.root.querySelector('.inventory-inspection-modal'), null, endInspection);
+            assert.equal(view.root.querySelector('.confirm-card'), null, endInspection);
+        } finally { view.unmount(); }
+    }
+});
+
+test('request viewers inspect requested and approved quantities and rejection reasons without write controls', async () => {
+    const records = [
+        { id: 1, request_no: 'PARTIAL-REQUEST', status: 'partially_approved' },
+        { id: 2, request_no: 'REJECTED-REQUEST', status: 'rejected' },
+    ];
+    const calls = [];
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint) {
+            calls.push(endpoint);
+            if (endpoint === 'pages/requests') return list(records);
+            const row = records.find((record) => endpoint === `requests/${record.id}`);
+            return { data: { data: { ...row, branch_name: 'Erebuni', rejection_reason: row.status === 'rejected' ? 'No usable stock' : null,
+                items: [{ id: 9, code: 'QA-ITEM', name: 'Reagent', requested_qty: '5.000', approved_qty: '2.000', unit: 'հատ', note: 'For tomorrow' }] } } };
+        },
+        async post() { assert.fail('inspection must not write'); },
+        async put() { assert.fail('inspection must not write'); },
+    }, { id: 7, branch: { id: 2 }, location_id: 2, permissions: { 'requests.view': true } });
+    try {
+        await settle();
+        assert.equal(view.root.querySelector('tbody button:not(.request-details-trigger)'), null);
+        view.root.querySelectorAll('.request-details-trigger')[0].click(); await settle();
+        const partial = view.root.querySelector('.request-details-modal');
+        assert.match(partial.textContent, /PARTIAL-REQUEST/);
+        assert.match(partial.textContent, /Մասնակի է հաստատված/);
+        assert.match(partial.textContent, /5\.000/);
+        assert.match(partial.textContent, /2\.000/);
+        assert.match(partial.textContent, /QA-ITEM.*Reagent/s);
+        assert.equal(partial.querySelector('form,input,select,textarea'), null);
+        assert.equal(partial.querySelector('.primary-button'), null);
+        partial.querySelector('.close-button').click(); await settle();
+        view.root.querySelectorAll('.request-details-trigger')[1].click(); await settle();
+        assert.match(view.root.querySelector('.request-rejection-reason').textContent, /No usable stock/);
+        assert.equal(view.root.querySelector('.request-details-modal tbody tr td:nth-child(3)').textContent, '—');
+        assert.deepEqual(calls, ['pages/requests', 'requests/1', 'requests/2']);
+    } finally { view.unmount(); }
+});
+
+test('overlapping request inspections keep the latest details and close safely on access changes', async () => {
+    const first = deferred(); const second = deferred();
+    const user = { id: 7, location_id: 2, permissions: { 'requests.view': true } };
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint) {
+            if (endpoint === 'pages/requests') return list([{ id: 1, request_no: 'OLD' }, { id: 2, request_no: 'CURRENT' }]);
+            return endpoint === 'requests/1' ? first.promise : second.promise;
+        },
+        async post() { assert.fail('inspection must not write'); },
+    }, user);
+    try {
+        await settle();
+        view.root.querySelectorAll('.request-details-trigger')[0].click(); await settle();
+        view.root.querySelectorAll('.request-details-trigger')[1].click(); await settle();
+        second.resolve({ data: { data: { id: 2, request_no: 'CURRENT', status: 'sent', items: [] } } }); await settle();
+        first.resolve({ data: { data: { id: 1, request_no: 'OLD', status: 'sent', items: [] } } }); await settle();
+        assert.match(view.root.querySelector('.request-details-modal').textContent, /CURRENT/);
+        assert.doesNotMatch(view.root.querySelector('.request-details-modal').textContent, /OLD/);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: {} } })); await settle();
+        assert.equal(view.root.querySelector('.request-details-modal'), null);
+        assert.equal(view.root.querySelector('.request-details-trigger'), null);
+    } finally { view.unmount(); }
+});
+
+test('a request inspection response after closure or a session change cannot restore private details', async () => {
+    for (const endInspection of ['close', 'session']) {
+        const pending = deferred();
+        const user = { id: 7, location_id: 2, permissions: { 'requests.view': true } };
+        const view = await mountView('views/requests/Index.vue', '/requests', {
+            async get(endpoint) { return endpoint === 'pages/requests' ? list([{ id: 1, request_no: 'PRIVATE' }]) : pending.promise; },
+        }, user);
+        try {
+            await settle(); view.root.querySelector('.request-details-trigger').click(); await settle();
+            if (endInspection === 'close') view.root.querySelector('.request-details-modal .close-button').click();
+            else window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8, location_id: 3 } }));
+            await settle();
+            pending.resolve({ data: { data: { id: 1, request_no: 'PRIVATE', status: 'approved', items: [] } } }); await settle();
+            assert.equal(view.root.querySelector('.request-details-modal'), null);
+        } finally { view.unmount(); }
+    }
+});
+
+test('a failed request detail load shows its error without showing stale data or mutation controls', async () => {
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint) {
+            if (endpoint === 'pages/requests') return list([{ id: 1, request_no: 'DENIED' }]);
+            throw { response: { status: 403, data: { message: 'Access denied' } } };
+        },
+        async post() { assert.fail('inspection must not write'); },
+    }, { id: 7, permissions: { 'requests.view': true } });
+    try {
+        await settle(); view.root.querySelector('.request-details-trigger').click(); await settle();
+        assert.match(view.root.querySelector('.request-details-modal [role="alert"]').textContent, /Access denied/);
+        assert.equal(view.root.querySelector('.request-details-modal table'), null);
+        assert.equal(view.root.querySelector('.request-details-modal .primary-button'), null);
+    } finally { view.unmount(); }
 });
 
 test('request statuses distinguish review submission from goods shipment while filters keep their API codes and review permission', async () => {
@@ -577,7 +839,8 @@ test('request statuses distinguish review submission from goods shipment while f
         assert.equal(calls.at(-1).status, 'sent');
         assert.ok([...view.root.querySelectorAll('tbody button')].some((button) => button.textContent === 'Վերցնել ստուգման'));
         window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: { 'requests.view': true } } })); await settle();
-        assert.equal(view.root.querySelector('tbody button'), null, 'clearer badges do not grant workflow actions to a viewer');
+        assert.equal(view.root.querySelector('tbody button:not(.request-details-trigger)'), null, 'clearer badges do not grant workflow actions to a viewer');
+        assert.ok(view.root.querySelector('tbody .request-details-trigger'), 'a viewer can inspect the request without workflow rights');
         assert.equal(view.root.querySelector('tbody .workflow-status').textContent, 'Սպասում է ստուգման');
         const guide = view.root.querySelector('.workflow-guide');
         assert.equal(guide.open, false);

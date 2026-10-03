@@ -20,14 +20,14 @@ let listRequestVersion = 0;
 const rows = computed(() => result.value?.data || []);
 
 const entityLabels = {
-  audit_logs: 'Գործողությունների պատմություն', branches: 'Պահեստ կամ մասնաճյուղ', categories: 'Ապրանքային խումբ',
+  audit_logs: 'Գործողությունների պատմություն', branches: 'Պահեստ կամ մասնաճյուղ', categories: 'Ապրանքի տեսակ',
   inventory_sessions: 'Գույքագրում', movements: 'Պահեստային շարժ', products: 'Ապրանք', purchase_orders: 'Գնման պատվեր',
   receipts: 'Ապրանքի մուտք', returns: 'Վերադարձ', roles: 'Դեր և իրավունքներ', stock_lots: 'Ապրանքի խմբաքանակ (LOT)',
   stock_requests: 'Պահանջագիր', suppliers: 'Մատակարար', transfers: 'Պահեստների տեղափոխում', users: 'Աշխատակից',
 };
 const fieldLabels = {
   active: 'Գործունեության կարգավիճակ', address: 'Հասցե', actor_id: 'Կատարող', approved_qty: 'Հաստատված քանակ',
-  branch_id: 'Մասնաճյուղ', category_id: 'Ապրանքային խումբ', code: 'Կոդ', contact_name: 'Կոնտակտային անձ',
+  branch_id: 'Մասնաճյուղ', category_id: 'Ապրանքի տեսակ', code: 'Կոդ', contact_name: 'Կոնտակտային անձ',
   contract_end: 'Պայմանագրի ավարտ', contract_no: 'Պայմանագրի համար', contract_start: 'Պայմանագրի սկիզբ',
   counted_qty: 'Հաշվարկված քանակ', created_at: 'Գրանցման ամսաթիվ', delivery_days: 'Առաքման ժամկետ',
   description: 'Նկարագրություն', difference: 'Տարբերություն', difference_reason: 'Տարբերության պատճառ', direction: 'Ուղղություն',
@@ -35,7 +35,7 @@ const fieldLabels = {
   from_branch: 'Ուղարկող պահեստ', from_location: 'Ուղարկող պահեստ', issue_type: 'Ելքի պատճառ', items: 'Ապրանքներ',
   inventory_no: 'Գույքագրման համար', line_count: 'Ապրանքների տողերի քանակ', location_id: 'Պահեստ', lot_no: 'LOT համար',
   max_qty: 'Առավելագույն մնացորդ', min_qty: 'Նվազագույն մնացորդ', movement_no: 'Շարժի համար', name: 'Անվանում',
-  optimal_qty: 'Նպատակային մնացորդ', parent_id: 'Վերադաս ապրանքային խումբ', payment_terms: 'Վճարման պայմաններ',
+  optimal_qty: 'Նպատակային մնացորդ', parent_id: 'Հիմնական տեսակ', payment_terms: 'Վճարման պայմաններ',
   permissions: 'Դերի իրավունքներ', phone: 'Հեռախոս', product_id: 'Ապրանք', purchase_price: 'Գնման գին',
   quantity: 'Քանակ', qty: 'Քանակ', reason: 'Պատճառ', rejection_reason: 'Մերժման պատճառ', request_no: 'Պահանջագրի համար',
   return_no: 'Վերադարձի համար', role: 'Դեր', status: 'Կարգավիճակ', supplier_id: 'Մատակարար', tax_id: 'ՀՎՀՀ',

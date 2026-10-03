@@ -182,12 +182,24 @@ class CatalogService
         });
     }
 
+    public function categories(): array
+    {
+        return $this->catalog->categories()->map(static fn (Category $category): array => [
+            'id' => (int) $category->id,
+            'name' => $category->name,
+            'parent_id' => $category->parent_id === null ? null : (int) $category->parent_id,
+            'parent' => $category->parent ? ['id' => (int) $category->parent->id, 'name' => $category->parent->name] : null,
+            'products_count' => (int) $category->products_count,
+            'children_count' => (int) $category->children_count,
+        ])->all();
+    }
+
     public function deleteCategory(User $actor, string $ip, int $id): void
     {
         DB::transaction(function () use ($actor, $ip, $id): void {
             $category = $this->catalog->findCategory($id);
             if ($this->catalog->categoryIsUsed($category)) {
-                throw ValidationException::withMessages(['category' => ['Օգտագործվող խումբը չի ջնջվում․ նախ տեղափոխեք ապրանքներն ու ենթախմբերը։']]);
+                throw ValidationException::withMessages(['category' => ['Օգտագործվող տեսակը չի ջնջվում․ նախ տեղափոխեք ապրանքներն ու ենթատեսակները։']]);
             }
             $before = $category->only(['name', 'parent_id']);
             $this->catalog->deleteCategory($category);

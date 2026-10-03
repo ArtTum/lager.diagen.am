@@ -177,7 +177,7 @@ class ReportService
         $columns = match ($type) {
             'stock_by_location', 'central_stock', 'branch_stock', 'item_value', 'low_stock' => [
                 'branch_name' => 'Պահեստ', 'code' => 'Կոդ', 'product_name' => 'Ապրանք',
-                'category' => 'Խումբ', 'supplier' => 'Մատակարար', 'unit' => 'Միավոր',
+                'category' => 'Ապրանքի տեսակ', 'supplier' => 'Մատակարար', 'unit' => 'Միավոր',
                 'quantity' => 'Փաստացի մնացորդ', 'reserved_quantity' => 'Պահուստավորված', 'free_quantity' => 'Ազատ մնացորդ',
                 'min_qty' => 'MIN', 'optimal_qty' => 'OPTIMAL', 'max_qty' => 'MAX',
                 'value' => 'Ընդհանուր արժեք',

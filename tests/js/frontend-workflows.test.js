@@ -219,6 +219,111 @@ test('navigating between purchase orders and receipts reloads the module and clo
     assert.equal(userListeners.size, 0);
 });
 
+test('product viewers can reach product types from the sidebar without a separate category permission', async () => {
+    const user = { id: 7, permissions: { 'products.view': true } };
+    const App = component('App.vue', {
+        '@/services/api': {}, '@/router': { currentUser: () => user, refreshCurrentUser: async () => null },
+        '@/router/access': { userContextChanged }, '@/components/NotificationBell.vue': stub,
+    });
+    const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
+        { path: '/products', component: stub, meta: { title: 'Products' } },
+        { path: '/categories', component: stub, meta: { title: 'Ապրանքի տեսակներ' } },
+        { path: '/no-access', component: stub },
+    ] });
+    await router.push('/products');
+    const view = mount(App, { router });
+    try {
+        await settle();
+        const link = view.root.querySelector('.sidebar a[href="/categories"]');
+        assert.ok(link);
+        link.click(); await settle();
+        assert.equal(router.currentRoute.value.path, '/categories');
+        assert.match(view.root.querySelector('.topbar-label').textContent, /Ապրանքի տեսակներ/);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { id: 7, permissions: {} } }));
+        await settle();
+        assert.equal(view.root.querySelector('.sidebar a[href="/categories"]'), null);
+    } finally { view.unmount(); }
+});
+
+async function purchasingShell(api, user, path) {
+    const context = { currentUser: () => user, refreshCurrentUser: async () => null };
+    const Purchasing = component('views/purchasing/Index.vue', {
+        '@/components/Pagination.vue': stub, '@/components/ExportActions.vue': stub,
+        '@/components/ListFilterBar.vue': stub, '@/services/api': api, '@/router': context, '@/dateUtils': dateUtils,
+    });
+    const App = component('App.vue', {
+        '@/services/api': api, '@/router': context, '@/router/access': { userContextChanged }, '@/components/NotificationBell.vue': stub,
+    });
+    const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
+        { path: '/purchases', component: Purchasing, meta: { title: 'Purchases' } },
+        { path: '/receipts', component: Purchasing, meta: { title: 'Receipts' } },
+        { path: '/no-access', component: stub },
+    ] });
+    await router.push(path);
+    return { ...mount(App, { router }), router };
+}
+
+const purchaseSnapshot = (records = []) => ({ data: { data: records, columns: { order_no: 'Order', status: 'Status' }, pagination: { total: records.length, per_page: 15, current_page: 1, last_page: 1 } } });
+const receiptOrder = { id: 7, order_no: 'ORDER-7', supplier: 'Supplier', items: [{ id: 4, name: 'Reagent', code: 'REAG-4', unit: 'հատ', ordered_qty: 10, received_qty: 6, expiry_control: true }] };
+
+test('an approved purchase shortcut opens its outstanding receipt lines without writing or showing full orders as receivable', async () => {
+    const calls = [];
+    const user = { id: 8, permissions: { 'purchases.view': true, 'receipts.view': true, 'receipts.create': true } };
+    const api = { async get(endpoint) {
+        calls.push(endpoint);
+        if (endpoint === 'purchasing/receipts/options') return { data: { data: { suppliers: [], products: [], orders: [receiptOrder] } } };
+        return purchaseSnapshot(endpoint === 'pages/purchases' ? [
+            { id: 7, order_no: 'ORDER-7', status: 'approved', has_remaining_items: true },
+            { id: 9, order_no: 'ORDER-9', status: 'approved', has_remaining_items: false },
+        ] : []);
+    }, async post() { assert.fail('Opening a receipt must not register stock'); } };
+    const view = await purchasingShell(api, user, '/purchases');
+    try {
+        await settle();
+        const links = view.root.querySelectorAll('tbody a[href="/receipts?order=7"]');
+        assert.equal(links.length, 1);
+        assert.equal(view.root.querySelector('tbody a[href="/receipts?order=9"]'), null);
+        assert.match(view.root.querySelector('tbody').textContent, /Մուտքագրման մնացորդ չկա/);
+        links[0].click(); await settle(); await settle();
+        assert.equal(view.router.currentRoute.value.path, '/receipts');
+        assert.equal(view.root.querySelector('.purchase-modal select').value, '7');
+        assert.match(view.root.querySelector('.receipt-line').textContent, /Պատվերի մնացորդ՝ 4/);
+        assert.ok(calls.includes('purchasing/receipts/options'));
+    } finally { view.unmount(); }
+
+    const viewer = await purchasingShell(api, { id: 8, permissions: { 'purchases.view': true, 'receipts.view': true } }, '/purchases');
+    try { await settle(); assert.equal(viewer.root.querySelector('tbody a[href="/receipts?order=7"]'), null); }
+    finally { viewer.unmount(); }
+});
+
+test('a receipt deep link with no outstanding order explains the issue instead of opening an empty form', async () => {
+    const view = await purchasingShell({ async get(endpoint) {
+        return endpoint.startsWith('purchasing/') ? { data: { data: { suppliers: [], products: [], orders: [] } } } : purchaseSnapshot();
+    } }, { id: 8, permissions: { 'receipts.view': true, 'receipts.create': true } }, '/receipts?order=7');
+    try {
+        await settle();
+        assert.equal(view.root.querySelector('.purchase-modal'), null);
+        assert.match(view.root.querySelector('.notice-success').textContent, /չունի մուտքագրման ենթակա մնացորդ/);
+    } finally { view.unmount(); }
+});
+
+test('a late receipt options response cannot open a previous-account form after receipt creation permission is removed', async () => {
+    const pending = deferred();
+    const user = { id: 8, permissions: { 'receipts.view': true, 'receipts.create': true } };
+    const view = await purchasingShell({ async get(endpoint) {
+        return endpoint.startsWith('purchasing/') ? pending.promise : purchaseSnapshot();
+    } }, user, '/receipts?order=7');
+    try {
+        await settle();
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { id: 9, permissions: { 'receipts.view': true } } }));
+        await settle();
+        pending.resolve({ data: { data: { suppliers: [], products: [], orders: [receiptOrder] } } });
+        await settle();
+        assert.equal(view.root.querySelector('.purchase-modal'), null);
+        assert.equal(view.root.querySelector('.page-heading button'), null);
+    } finally { view.unmount(); }
+});
+
 test('a product deactivation confirmation cannot survive navigation into branch management', async () => {
     const permissions = { 'products.view': true, 'products.delete': true, 'branches.view': true, 'branches.delete': true };
     const userContext = { currentUser: () => ({ name: 'Auditor', permissions }), refreshCurrentUser: async () => null };
@@ -240,6 +345,7 @@ test('a product deactivation confirmation cannot survive navigation into branch 
     });
     const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
         { path: '/products', component: Catalog, meta: { title: 'Products' } },
+        { path: '/categories', component: stub, meta: { title: 'Categories' } },
         { path: '/branches', component: Catalog, meta: { title: 'Branches' } },
         { path: '/no-access', component: stub },
     ] });

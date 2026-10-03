@@ -45,14 +45,14 @@ const toggleNavigation = () => {
 };
 const openGroups = ref({ 'Գնումներ և գործողություններ': true });
 const groups = [
-    { title: 'Գնումներ և գործողություններ', links: [['suppliers', 'Մատակարարներ', 'users'], ['products', 'Ապրանքներ', 'box'], ['purchases', 'Գնումների պատվերներ', 'clipboard'], ['receipts', 'Մուտքեր', 'arrowDown'], ['requests', 'Պահանջագրեր', 'plusFile'], ['transfers', 'Տեղափոխումներ', 'transfers'], ['returns', 'Վերադարձներ', 'returns']] },
+    { title: 'Գնումներ և գործողություններ', links: [['suppliers', 'Մատակարարներ', 'users'], ['products', 'Ապրանքներ', 'box'], ['categories', 'Ապրանքի տեսակներ', 'boxes', 'products.view'], ['purchases', 'Գնումների պատվերներ', 'clipboard'], ['receipts', 'Մուտքեր', 'arrowDown'], ['requests', 'Պահանջագրեր', 'plusFile'], ['transfers', 'Տեղափոխումներ', 'transfers'], ['returns', 'Վերադարձներ', 'returns']] },
     { title: 'Պաշար և վերահսկում', links: [['stock', 'Ընդհանուր մնացորդ', 'boxes'], ['movements', 'Պահեստի շարժ', 'movements'], ['inventory', 'Գույքագրում', 'clipboard'], ['expiry', 'Ժամկետների վերահսկում', 'clock']] },
     { title: 'Հաշվետվություններ', links: [['reports', 'Հաշվետվություններ', 'chart'], ['audit', 'Գործողությունների պատմություն', 'history']] },
     { title: 'Կառավարում', links: [['branches', 'Մասնաճյուղեր', 'branches'], ['users', 'Օգտատերեր', 'users'], ['roles', 'Դերեր և իրավունքներ', 'shield']] },
 ];
 const allowedGroups = computed(() => groups.map((group) => ({
     ...group,
-    links: group.links.filter(([path]) => user.value?.permissions?.[`${path}.view`]),
+    links: group.links.filter(([path, , , permission]) => user.value?.permissions?.[permission || `${path}.view`]),
 })).filter((group) => group.links.length));
 watch([() => route.path, allowedGroups], () => {
     mobileMenuOpen.value = false;

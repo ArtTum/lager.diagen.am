@@ -88,6 +88,13 @@ class CatalogRepository
         return Category::query()->create($data);
     }
 
+    public function categories(): Collection
+    {
+        return Category::query()->select(['id', 'name', 'parent_id'])
+            ->with('parent:id,name')->withCount(['products', 'children'])
+            ->orderBy('name')->get();
+    }
+
     public function findCategory(int $id): Category
     {
         return Category::query()->findOrFail($id);

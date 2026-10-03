@@ -191,7 +191,7 @@ useLiveRefresh(() => load(page.value), { isBusy: loading });
         <label v-if="showActorFilter" class="form-field">Աշխատակից
           <select v-searchable-select v-model="filters.actor_id" class="form-control"><option value="">Բոլոր աշխատակիցները</option><option v-for="actor in filterOptions.actors || []" :key="actor.id" :value="actor.id">{{ actor.name }}</option></select>
         </label>
-        <label v-if="showCategoryFilter" class="form-field">Ապրանքային խումբ
+        <label v-if="showCategoryFilter" class="form-field">Ապրանքի տեսակ
           <select v-searchable-select v-model="filters.category_id" class="form-control"><option value="">Բոլոր խմբերը</option><option v-for="category in filterOptions.categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select>
         </label>
         <button class="primary-button report-apply" :disabled="loading"><AppIcon name="adjust" />{{ loading ? 'Բեռնվում է…' : 'Կիրառել ֆիլտրերը' }}</button>

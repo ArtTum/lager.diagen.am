@@ -37,7 +37,7 @@ class MovementService
     {
         $showCost = $actor->hasPermissionCode('purchases.view');
         $showSuppliers = $actor->hasPermissionCode('suppliers.view');
-        $headers = ['Ամսաթիվ', 'Փաստաթուղթ', 'Գործողություն', 'Կոդ', 'Ապրանք', 'Խումբ', 'LOT'];
+        $headers = ['Ամսաթիվ', 'Փաստաթուղթ', 'Գործողություն', 'Կոդ', 'Ապրանք', 'Ապրանքի տեսակ', 'LOT'];
         if ($showSuppliers) {
             $headers[] = 'Մատակարար';
         }

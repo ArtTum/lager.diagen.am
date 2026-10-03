@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import { userContextChanged } from '@/router/access';
 import ExportActions from '@/components/ExportActions.vue';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 import { formatDisplayDate } from '@/dateUtils';
@@ -18,11 +19,13 @@ const result = ref(null); const options = ref({ branches: [], products: [] });
 const requestSuggestions = ref({}); const suggestionBusy = ref(false);
 const busy = ref(false); const saving = ref(false); const search = ref(''); const error = ref(''); const notice = ref('');
 const modal = ref(false); const reviewModal = ref(false); const confirmAction = ref(null); const editingId = ref(null); const reviewRequest = ref(null);
+const detailsOpen = ref(false); const detailsBusy = ref(false); const detailsError = ref(''); const details = ref(null);
 const filters = reactive({ status: '', urgency: '', branch_id: '', from: '', to: '' });
 const form = reactive({ branch_id: '', urgency: 'normal', reason: '', submit_mode: 'send', items: [{ product_id: '', qty: '', note: '' }] });
 let debounce;
 let listRequestVersion = 0;
 let suggestionRequestVersion = 0;
+let detailRequestVersion = 0;
 const rows = computed(() => result.value?.data || []);
 const filterSelects = computed(() => [
   { key: 'status', label: 'Կարգավիճակ', allLabel: 'Բոլոր փուլերը', options: statusOptions('requests') },
@@ -36,9 +39,31 @@ const location = computed(() => Number(user.value?.location_id || 0));
 async function load(page=1,pageSize=result.value?.pagination.per_page||15) { const version=++listRequestVersion;busy.value=true;error.value='';try{const r=await api.get('pages/requests',{params:{...filters,page,per_page:pageSize,search:search.value||undefined}});if(version===listRequestVersion)result.value=r.data;}catch(e){if(version===listRequestVersion)error.value=e.response?.data?.message||'Պահանջագրերի ցանկը չհաջողվեց բեռնել։';}finally{if(version===listRequestVersion)busy.value=false;} }
 function resetFilters(){Object.assign(filters,{status:'',urgency:'',branch_id:'',from:'',to:''});load(1);}
 watch(search,()=>{clearTimeout(debounce);debounce=setTimeout(()=>load(1),250);});
-const updateUser=(event)=>{user.value=event.detail;};
+const updateUser=(event)=>{if(userContextChanged(user.value,event.detail))closeDetails();user.value=event.detail;};
 onMounted(()=>{load();window.addEventListener('lager:user',updateUser);});
-onBeforeUnmount(()=>{listRequestVersion+=1;suggestionRequestVersion+=1;clearTimeout(debounce);window.removeEventListener('lager:user',updateUser);});
+onBeforeUnmount(()=>{listRequestVersion+=1;suggestionRequestVersion+=1;closeDetails();clearTimeout(debounce);window.removeEventListener('lager:user',updateUser);});
+function closeDetails() {
+  detailRequestVersion += 1;
+  detailsOpen.value = false; detailsBusy.value = false; details.value = null; detailsError.value = '';
+}
+async function openDetails(row) {
+  if (!can('requests.view')) return;
+  const version = ++detailRequestVersion;
+  detailsOpen.value = true; detailsBusy.value = true; details.value = null; detailsError.value = '';
+  try {
+    const response = await api.get(`requests/${row.id}`);
+    if (version !== detailRequestVersion || !can('requests.view')) return;
+    const snapshot = response.data.data;
+    if (Number(snapshot?.id) !== Number(row.id) || !Array.isArray(snapshot?.items)) throw new Error('incomplete request');
+    details.value = snapshot;
+  } catch (e) {
+    if (version === detailRequestVersion) detailsError.value = e.response?.data?.message || 'Պահանջագրի տվյալները չհաջողվեց բեռնել։';
+  } finally { if (version === detailRequestVersion) detailsBusy.value = false; }
+}
+function approvedQuantity(item) {
+  return ['approved', 'partially_approved', 'collecting', 'ready_to_ship', 'shipped', 'received', 'closed'].includes(details.value?.status)
+    ? item.approved_qty ?? '—' : '—';
+}
 async function loadOptions(){const r=await api.get('catalog/requests/options');options.value=r.data.data;}
 async function loadSuggestions(){const version=++suggestionRequestVersion;const branchId=Number(form.branch_id||0);requestSuggestions.value={};suggestionBusy.value=false;if(!branchId)return;suggestionBusy.value=true;try{const r=await api.get('requests/suggestions',{params:{branch_id:branchId}});if(version===suggestionRequestVersion)requestSuggestions.value=r.data.data.items||{};}catch(e){if(version===suggestionRequestVersion)error.value=e.response?.data?.message||'Մնացորդի առաջարկը չհաջողվեց բեռնել։';}finally{if(version===suggestionRequestVersion)suggestionBusy.value=false;}}
 function suggestionFor(productId){return requestSuggestions.value[String(productId)]||null;}
@@ -62,8 +87,8 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
 <div class="page-heading"><div><p class="eyebrow">ՊԱՀԱՆՋԻՑ ՄԻՆՉԵՎ ՍՏԱՑՈՒՄ</p><h1>{{route.meta.title}}</h1><p class="muted">Պահանջագիրը անցնում է ստուգման, հաստատման, հավաքագրման, առաքման և ստացման փուլերով։</p></div><button v-if="can('requests.create')" class="primary-button" @click="create"><span><AppIcon name="add" /></span>Նոր պահանջագիր</button></div>
 <div v-if="error&&!modal&&!reviewModal&&!confirmAction" class="alert-error" role="alert">{{error}}</div><div v-if="notice" class="notice-success" role="status">{{notice}}</div>
 <WorkflowStatusGuide workflow="requests" />
-<section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով, մասնաճյուղով կամ կարգավիճակով…"></label><div class="list-count">Ընդամենը՝ <b>{{result?.pagination.total??'…'}}</b></div><ExportActions page="requests" :search="search" :filters="filters" :disabled="busy" /></div><ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
-<div class="table-scroll"><table class="data-table"><thead><tr><th>Պահանջագիր</th><th>Մասնաճյուղ</th><th>Հրատապություն</th><th>Կարգավիճակ</th><th>Ստեղծվել է</th><th>Գործողություն</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id"><td><strong>{{row.request_no}}</strong><RouterLink v-if="['shipped','received','closed'].includes(row.status)" class="dispatch-link" :to="'/requests/' + row.id + '/dispatch'">Դիտել / տպել բաշխումը</RouterLink></td><td>{{row.branch}}</td><td>{{({normal:'Սովորական',high:'Բարձր',urgent:'Շտապ'})[row.urgency]||row.urgency}}</td><td><StatusBadge workflow="requests" :status="row.status" /></td><td>{{formatDisplayDate(row.created_at)}}</td><td><button v-if="action(row)" class="secondary-button compact-action" :disabled="saving" @click="requestAction(row,action(row)[0])">{{action(row)[1]}}</button><button v-if="canCancel(row) && action(row)?.[0] !== 'cancel'" class="secondary-button compact-action" :disabled="saving" @click="requestAction(row,'cancel')">Չեղարկել</button><span v-if="!action(row) && !canCancel(row)" class="muted">—</span></td></tr><tr v-if="!busy&&result&&!rows.length"><td colspan="6" class="table-empty">{{search?'Որոնմանը համապատասխան պահանջագիր չկա։':'Պահանջագրեր դեռ չկան։'}}</td></tr><tr v-if="busy&&!result"><td colspan="6" class="table-empty">Բեռնվում է…</td></tr></tbody></table></div>
+<section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով կամ մասնաճյուղով…"></label><div class="list-count">Ընդամենը՝ <b>{{result?.pagination.total??'…'}}</b></div><ExportActions page="requests" :search="search" :filters="filters" :disabled="busy" /></div><ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
+<div class="table-scroll"><table class="data-table"><thead><tr><th>Պահանջագիր</th><th>Մասնաճյուղ</th><th>Հրատապություն</th><th>Կարգավիճակ</th><th>Ստեղծվել է</th><th>Գործողություն</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id"><td><strong>{{row.request_no}}</strong><RouterLink v-if="['shipped','received','closed'].includes(row.status)" class="dispatch-link" :to="'/requests/' + row.id + '/dispatch'">Դիտել / տպել բաշխումը</RouterLink></td><td>{{row.branch}}</td><td>{{({normal:'Սովորական',high:'Բարձր',urgent:'Շտապ'})[row.urgency]||row.urgency}}</td><td><StatusBadge workflow="requests" :status="row.status" /></td><td>{{formatDisplayDate(row.created_at)}}</td><td><button v-if="action(row)" class="secondary-button compact-action" :disabled="saving" @click="requestAction(row,action(row)[0])">{{action(row)[1]}}</button><button v-if="canCancel(row) && action(row)?.[0] !== 'cancel'" class="secondary-button compact-action" :disabled="saving" @click="requestAction(row,'cancel')">Չեղարկել</button><button v-if="can('requests.view')" type="button" class="secondary-button compact-action request-details-trigger" @click="openDetails(row)">Դիտել</button><span v-if="!action(row) && !canCancel(row) && !can('requests.view')" class="muted">—</span></td></tr><tr v-if="!busy&&result&&!rows.length"><td colspan="6" class="table-empty">{{search?'Որոնմանը համապատասխան պահանջագիր չկա։':'Պահանջագրեր դեռ չկան։'}}</td></tr><tr v-if="busy&&!result"><td colspan="6" class="table-empty">Բեռնվում է…</td></tr></tbody></table></div>
 <Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
 <div v-if="modal" class="modal-backdrop" @click.self="modal=false"><form class="modal-card request-modal" @submit.prevent="save('send')"><div class="modal-header"><div><p class="eyebrow">ՄԱՍՆԱՃՅՈՒՂԱՅԻՆ ՊԱՀԱՆՋ</p><h2>{{editingId?'Խմբագրել սևագիրը':'Նոր պահանջագիր'}}</h2><p>Ավելացրեք ապրանքներն ու քանակները, ապա ուղարկեք կենտրոնական պահեստ։</p></div><button class="icon-button close-button" type="button" @click="modal=false"><AppIcon name="xmark" /></button></div>
@@ -74,4 +99,23 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
 <div v-if="reviewModal&&reviewRequest" class="modal-backdrop" @click.self="reviewModal=false"><section class="modal-card request-modal"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԱՆՋԱԳՐԻ ԴԻՏԱՐԿՈՒՄ</p><h2>{{reviewRequest.request_no}}</h2><p>{{reviewRequest.branch_name}} · ստուգեք քանակներն ու հաստատման հնարավորությունը։</p></div><button class="icon-button close-button" @click="reviewModal=false"><AppIcon name="xmark" /></button></div><div class="approval-list"><div v-for="line in reviewRequest.items" :key="line.id" class="approval-line"><div><b>{{line.name}}</b><small class="cell-subtitle">Պահանջված՝ {{line.requested_qty}} {{line.unit}} · Մասնաճյուղում՝ {{line.branch_current_qty??'—'}} {{line.unit}} · Միջին ամսական սպառում՝ {{line.branch_monthly_average??'—'}} {{line.unit}} · Կենտրոնի ազատ մնացորդ՝ {{line.central_free_qty??'—'}} {{line.unit}}</small></div><label class="form-field">Հաստատվող<input v-model="line.approve_qty" type="number" min="0" :max="Math.min(Number(line.requested_qty)||0,Number(line.central_free_qty)||0)" step="0.001" class="form-control"></label></div></div><label class="form-field rejection-field">Մերժման պատճառ<textarea v-model.trim="reviewRequest.rejection_reason" class="form-control" placeholder="Պարտադիր է միայն մերժելիս"></textarea></label><p v-if="error" class="form-error">{{error}}</p><div class="modal-actions"><button class="secondary-button" @click="reviewModal=false">Փակել</button><button class="danger-button" :disabled="saving" @click="review('reject')">Մերժել</button><button class="primary-button" :disabled="saving" @click="review('approve')">Հաստատել քանակները</button></div></section></div>
 
 <div v-if="confirmAction" class="modal-backdrop" @click.self="confirmAction=null"><section class="modal-card confirm-card"><div class="metric-icon blue"><AppIcon name="transfers" /></div><h2>{{actionTitle(confirmAction.key)}}</h2><p>Պահանջագիր՝ <b>{{confirmAction.row.request_no}}</b></p><p class="muted">Գործողությունը կպահպանվի պատմությունում և կփոխի պահանջագրի ընթացիկ փուլը։</p><p v-if="error" class="form-error">{{error}}</p><div class="modal-actions"><button class="secondary-button" @click="confirmAction=null">Չեղարկել</button><button class="primary-button" :disabled="saving" @click="runAction">{{saving?'Կատարվում է…':'Հաստատել'}}</button></div></section></div>
+<div v-if="detailsOpen" class="modal-backdrop" @click.self="closeDetails" @keydown.esc="closeDetails">
+  <section class="modal-card request-details-modal" role="dialog" aria-modal="true" aria-labelledby="request-details-title">
+    <div class="modal-header"><div><p class="eyebrow">ՊԱՀԱՆՋԱԳՐԻ ՄԱՆՐԱՄԱՍՆԵՐ</p><h2 id="request-details-title">{{ details?.request_no || 'Պահանջագիր' }}</h2><p v-if="details">{{ details.branch_name || details.branch?.name || '—' }} · {{ formatDisplayDate(details.created_at) }}</p></div><button type="button" class="icon-button close-button" aria-label="Փակել" @click="closeDetails"><AppIcon name="xmark" /></button></div>
+    <p v-if="detailsBusy" class="table-empty" role="status">Տվյալները բեռնվում են…</p>
+    <p v-if="detailsError" class="form-error" role="alert">{{ detailsError }}</p>
+    <template v-if="details">
+      <StatusBadge workflow="requests" :status="details.status" />
+      <p v-if="details.reason"><b>Պահանջի պատճառը․</b> {{ details.reason }}</p>
+      <p v-if="details.rejection_reason" class="request-rejection-reason"><b>Մերժման պատճառը․</b> {{ details.rejection_reason }}</p>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Ապրանք</th><th>Պահանջված քանակ</th><th>Հաստատված քանակ</th><th>Միավոր</th><th>Նշում</th></tr></thead><tbody><tr v-for="item in details.items" :key="item.id"><td><strong>{{ item.code || item.product?.code }}</strong><span class="cell-subtitle">{{ item.name || item.product?.name }}</span></td><td>{{ item.requested_qty }}</td><td>{{ approvedQuantity(item) }}</td><td>{{ item.unit || item.product?.unit || '—' }}</td><td>{{ item.note || '—' }}</td></tr><tr v-if="!details.items.length"><td colspan="5" class="table-empty">Ապրանքային տողեր չկան։</td></tr></tbody></table></div>
+    </template>
+    <div class="modal-actions"><button type="button" class="secondary-button" @click="closeDetails">Փակել</button></div>
+  </section>
+</div>
 </template>
+
+<style scoped>
+.request-details-modal { width: min(920px, calc(100vw - 32px)); }
+.request-rejection-reason { padding: 12px; border-radius: 8px; background: #fff0f2; color: #a43c52; }
+</style>
