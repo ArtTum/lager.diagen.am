@@ -8,28 +8,66 @@ import { currentUser } from '@/router';
 const data = ref(null);
 const user = ref(currentUser());
 const error = ref('');
+const locationOptions = ref([]);
+const selectedLocationId = ref(null);
+const selectedLocation = ref(null);
+const canSelectLocation = ref(false);
 const dateLabel = new Intl.DateTimeFormat('hy-AM', { dateStyle: 'long' }).format(new Date());
+const can = (permission) => Boolean(user.value?.permissions?.[permission]);
+const showLocationSelector = computed(() => canSelectLocation.value && can('branches.view') && Number(user.value?.location_id) === 0);
+const selectedLocationName = computed(() => locationOptions.value.find((location) => Number(location.id) === selectedLocationId.value)?.name
+    || selectedLocation.value?.name || user.value?.branch?.name || 'Կենտրոնական պահեստ');
 
 let requestVersion = 0;
 const loading = ref(false);
 async function load() {
     const version = ++requestVersion;
     loading.value = true;
+    error.value = '';
     try {
-        const response = await api.get('dashboard');
-        if (version === requestVersion) { data.value = response.data.data; error.value = ''; }
-    } catch (e) { if (version === requestVersion) error.value = e.response?.data?.message || 'Վահանակի տվյալները չհաջողվեց բեռնել։'; }
+        const params = showLocationSelector.value && selectedLocationId.value !== null ? { branch_id: selectedLocationId.value } : {};
+        const response = await api.get('dashboard', { params });
+        if (version !== requestVersion) return;
+        const snapshot = response.data.data;
+        selectedLocation.value = snapshot.selected_location || null;
+        selectedLocationId.value = snapshot.selected_location ? Number(snapshot.selected_location.id) : null;
+        canSelectLocation.value = Boolean(snapshot.can_select_location);
+        locationOptions.value = canSelectLocation.value && Array.isArray(snapshot.location_options) ? snapshot.location_options : [];
+        data.value = snapshot;
+    } catch (e) {
+        if (version === requestVersion) {
+            data.value = null;
+            error.value = e.response?.data?.message || 'Վահանակի տվյալները չհաջողվեց բեռնել։';
+        }
+    }
     finally { if (version === requestVersion) loading.value = false; }
 }
-const onUserChange = (event) => { user.value = event.detail; };
+function changeLocation() {
+    if (!showLocationSelector.value) return;
+    data.value = null;
+    load();
+}
+function userScope(value) {
+    return JSON.stringify([value?.id, value?.location_id, value?.branch?.id,
+        Object.keys(value?.permissions || {}).filter((permission) => Boolean(value.permissions[permission])).sort()]);
+}
+const onUserChange = (event) => {
+    const scopeChanged = userScope(user.value) !== userScope(event.detail);
+    user.value = event.detail;
+    if (!scopeChanged) return;
+    requestVersion += 1;
+    data.value = null; error.value = ''; locationOptions.value = [];
+    selectedLocationId.value = null; selectedLocation.value = null; canSelectLocation.value = false;
+    if (can('dashboard.view')) load();
+    else loading.value = false;
+};
 onMounted(() => { load(); window.addEventListener('lager:user', onUserChange); });
 onBeforeUnmount(() => { requestVersion += 1; window.removeEventListener('lager:user', onUserChange); });
 useLiveRefresh(load, { isBusy: loading });
 
-const can = (permission) => Boolean(user.value?.permissions?.[permission]);
 const formatNumber = (value, maximumFractionDigits = 0) => Number(value || 0).toLocaleString('hy-AM', { maximumFractionDigits });
 const cards = computed(() => [
-    { label: 'Ապրանքային տեսակներ', key: 'products', hint: 'Ապրանքներ՝ ձեր պահեստում', tone: 'blue', icon: 'box', permission: 'stock.view' },
+    { label: 'Ապրանքային տեսակներ', key: 'products', hint: 'Ապրանքներ՝ ընտրված պահեստում', tone: 'blue', icon: 'box', permission: 'stock.view' },
     { label: 'Պահեստի միավորներ', key: 'units', hint: 'Ընդհանուր ընթացիկ մնացորդ', tone: 'green', icon: 'boxes', permission: 'stock.view', decimals: 3 },
     { label: 'Պաշարի արժեք', key: 'stock_value', hint: 'Ըստ գրանցված ինքնարժեքի', tone: 'violet', icon: 'chart', permission: 'purchases.view', suffix: ' ֏' },
     { label: 'Ցածր մնացորդ', key: 'low_stock_products', hint: 'MIN շեմից ցածր ապրանքներ', tone: 'amber', icon: 'trendDown', permission: 'stock.view', to: '/stock' },
@@ -58,14 +96,21 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
 </script>
 
 <template>
-    <div v-if="error" class="alert-error" role="alert">{{ error }}</div>
+    <div v-if="showLocationSelector" class="dashboard-scope-controls">
+        <label for="dashboard-location">Պահեստ / մասնաճյուղ</label>
+        <select id="dashboard-location" v-model.number="selectedLocationId" @change="changeLocation">
+            <option v-for="location in locationOptions" :key="location.id" :value="location.id">{{ location.name }}</option>
+        </select>
+    </div>
+    <div v-if="error" class="alert-error dashboard-error" role="alert"><span>{{ error }}</span><button class="secondary-button" type="button" :disabled="loading" @click="load">Կրկին փորձել</button></div>
+    <p v-if="loading" class="dashboard-load-status" role="status">«{{ selectedLocationName }}» տվյալները բեռնվում են…</p>
 
-    <section class="dashboard-hero">
+    <section class="dashboard-hero" :aria-busy="loading">
         <div class="dashboard-hero-copy">
             <p class="dashboard-hero-kicker"><span></span> ԴԻԱԳԵՆ ՊԼՅՈՒՍ · ՊԱՀԵՍՏԻ ՎԵՐԱՀՍԿՈՒՄ</p>
             <h1>Բարի գալուստ, {{ userName }}</h1>
             <p class="dashboard-hero-description">Պահեստի ընթացիկ պատկերը և օրվա հիմնական գործողությունները՝ մեկ տեղում։</p>
-            <div class="dashboard-hero-meta"><span><AppIcon name="clock" /> {{ todayLabel }}</span><span>{{ user?.branch?.name || 'Կենտրոնական պահեստ' }}</span></div>
+            <div class="dashboard-hero-meta"><span><AppIcon name="clock" /> {{ todayLabel }}</span><span>{{ selectedLocationName }}</span></div>
         </div>
         <div class="dashboard-hero-panel">
             <div class="dashboard-hero-panel-top"><span>ՊԱՀԵՍՏԻ ՄՆԱՑՈՐԴ</span><AppIcon name="boxes" /></div>
@@ -73,7 +118,7 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
                 <strong>{{ formatNumber(data.units, 3) }}</strong>
                 <small>ընդհանուր միավոր · {{ formatNumber(data.products) }} ապրանքատեսակ</small>
             </template>
-            <div v-else class="dashboard-hero-loading">Տվյալը հասանելի չէ</div>
+            <div v-else class="dashboard-hero-loading">{{ loading ? 'Բեռնվում է…' : error ? 'Տվյալները չեն բեռնվել' : 'Տվյալը հասանելի չէ' }}</div>
             <div class="dashboard-hero-actions">
                 <RouterLink v-if="can('requests.create')" to="/requests" class="dashboard-hero-action dashboard-hero-action-primary"><AppIcon name="plusFile" /> Նոր պահանջագիր</RouterLink>
                 <RouterLink v-if="can('stock.view')" to="/stock" class="dashboard-hero-action"><AppIcon name="boxes" /> Բացել մնացորդները</RouterLink>
@@ -83,7 +128,7 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
         <div class="dashboard-hero-orbit" aria-hidden="true"></div>
     </section>
 
-    <section class="dashboard-metrics" aria-label="Պահեստի հիմնական ցուցանիշներ">
+    <section class="dashboard-metrics" aria-label="Պահեստի հիմնական ցուցանիշներ" :aria-busy="loading">
         <article v-for="card in cards" :key="card.key" class="dashboard-metric-card" :class="`tone-${card.tone}`">
             <div class="dashboard-metric-accent"></div>
             <div class="dashboard-metric-top"><span class="dashboard-metric-icon"><AppIcon :name="card.icon" /></span><span class="dashboard-metric-caption">ԸՆԹԱՑԻԿ</span></div>
@@ -128,6 +173,26 @@ const todayLabel = computed(() => new Intl.DateTimeFormat('hy-AM', { dateStyle: 
 
     <section v-if="branches.length" class="dashboard-panel dashboard-branches">
         <header class="dashboard-panel-header"><div><p class="eyebrow">ՄԱՍՆԱՃՅՈՒՂԵՐ</p><h2>Պահեստների վիճակ</h2></div><span class="dashboard-panel-date">{{ branches.length }} ակտիվ մասնաճյուղ</span></header>
-        <div class="table-scroll"><table class="data-table"><thead><tr><th>Մասնաճյուղ</th><th>Մնացորդ</th><th>Բաց պահանջագիր</th><th>Չհաստատված</th><th>Սպասվող ընդունում</th><th>Տեղափոխման ընդունում</th></tr></thead><tbody><tr v-for="branch in branches" :key="branch.branch_id"><td><strong>{{ branch.branch }}</strong></td><td>{{ formatNumber(branch.stock_units, 3) }}</td><td>{{ branch.open_requests }}</td><td>{{ branch.unapproved_requests }}</td><td>{{ branch.awaiting_receipt_requests }}</td><td>{{ branch.awaiting_transfer_receipts }}</td></tr><tr v-if="!branches.length"><td colspan="6" class="table-empty">Ակտիվ մասնաճյուղ չկա։</td></tr></tbody></table></div>
+        <div class="table-scroll"><table class="data-table">
+            <thead><tr>
+                <th>Մասնաճյուղ</th><th v-if="can('stock.view')">Մնացորդ</th>
+                <template v-if="can('requests.view')"><th>Բաց պահանջագիր</th><th>Չհաստատված</th><th>Սպասվող ընդունում</th></template>
+                <th v-if="can('transfers.view')">Տեղափոխման ընդունում</th>
+            </tr></thead>
+            <tbody><tr v-for="branch in branches" :key="branch.branch_id">
+                <td><strong>{{ branch.branch }}</strong></td><td v-if="can('stock.view')">{{ formatNumber(branch.stock_units, 3) }}</td>
+                <template v-if="can('requests.view')"><td>{{ branch.open_requests }}</td><td>{{ branch.unapproved_requests }}</td><td>{{ branch.awaiting_receipt_requests }}</td></template>
+                <td v-if="can('transfers.view')">{{ branch.awaiting_transfer_receipts }}</td>
+            </tr></tbody>
+        </table></div>
     </section>
 </template>
+
+<style scoped>
+.dashboard-scope-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.dashboard-scope-controls label { color: #637089; font-size: 12px; font-weight: 600; }
+.dashboard-scope-controls select { width: min(100%, 360px); min-height: 44px; }
+.dashboard-load-status { margin: 0 0 12px; color: #637089; font-size: 12px; }
+.dashboard-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.dashboard-error button { margin-left: auto; white-space: nowrap; }
+</style>
