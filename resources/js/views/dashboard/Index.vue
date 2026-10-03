@@ -74,6 +74,8 @@ const cards = computed(() => [
     { label: 'Ցածր մնացորդ', key: 'low_stock_products', hint: 'MIN շեմից ցածր ապրանքներ', tone: 'amber', icon: 'trendDown', permission: 'stock.view', to: '/stock' },
     { label: 'Մոտ ժամկետանց LOT', key: 'expiring_lots', hint: 'Առաջիկա 90 օրվա ընթացքում', tone: 'rose', icon: 'clock', permission: 'expiry.view', to: '/expiry' },
     { label: 'Բաց պահանջագրեր', key: 'open_requests', hint: 'Ընթացքում գտնվող պահանջագրեր', tone: 'blue', icon: 'plusFile', permission: 'requests.view', to: '/requests' },
+    { label: 'Զրոյական մնացորդ', key: 'zero_stock_products', hint: 'Մնացորդ չունեցող ակտիվ ապրանքներ', tone: 'rose', icon: 'box', permission: 'stock.view', to: '/stock' },
+    { label: 'Ժամկետանց LOT', key: 'expired_lots', hint: 'Ժամկետն անցած LOT-եր՝ մնացորդով', tone: 'amber', icon: 'alert', permission: 'expiry.view', to: '/expiry' },
 ].filter((card) => can(card.permission) && data.value && Object.hasOwn(data.value, card.key)));
 
 const secondaryMetrics = computed(() => [

@@ -98,6 +98,7 @@ function choose(root, id) {
 }
 function heroLocation(root) { return root.querySelector('.dashboard-hero-meta span:last-child').textContent; }
 function heroUnits(root) { return root.querySelector('.dashboard-hero-panel strong')?.textContent; }
+function metric(root, label) { return [...root.querySelectorAll('.dashboard-metric-card')].find((card) => card.querySelector('p').textContent === label); }
 function chart(root, key) { return root.querySelector(`[data-testid="charts-${key}"]`); }
 function selectedDayValues(root) { return [...root.querySelectorAll('.chart-day-summary b')].map((element) => element.textContent); }
 function chartBuckets(root, key) { return [...chart(root, key).querySelectorAll('[data-bucket] dd')].map((element) => element.firstChild.textContent); }
@@ -115,6 +116,8 @@ test('central dashboard selection replaces all metrics and activity without show
         assert.equal(view.root.querySelectorAll('option').length, 3);
         assert.equal(heroLocation(view.root), 'Կենտրոնական պահեստ');
         assert.equal(heroUnits(view.root), '125');
+        assert.equal(metric(view.root, 'Զրոյական մնացորդ').querySelector('strong').textContent, '1');
+        assert.equal(metric(view.root, 'Ժամկետանց LOT').querySelector('strong').textContent, '0');
         choose(view.root, 2); await settle();
         assert.deepEqual(calls, [{}, { branch_id: 2 }]);
         assert.equal(heroLocation(view.root), 'Էրեբունի');
@@ -122,9 +125,11 @@ test('central dashboard selection replaces all metrics and activity without show
         assert.equal(view.root.querySelectorAll('.dashboard-metric-card, .dashboard-activity-row, .dashboard-secondary-card').length, 0);
         assert.ok(view.root.querySelector('[role="status"]'));
         assert.equal(view.root.querySelector('select').disabled, false, 'a pending load still permits a newer location choice');
-        selected.resolve(snapshot(2, { units: 42, products: 4, today: { receipts: 8, issues: 6, returns: 2, transfers: 1 } })); await settle();
+        selected.resolve(snapshot(2, { units: 42, products: 4, zero_stock_products: 3, expired_lots: 2, today: { receipts: 8, issues: 6, returns: 2, transfers: 1 } })); await settle();
         assert.equal(heroUnits(view.root), '42');
-        assert.equal(view.root.querySelectorAll('.dashboard-metric-card').length, 6);
+        assert.equal(view.root.querySelectorAll('.dashboard-metric-card').length, 8);
+        assert.equal(metric(view.root, 'Զրոյական մնացորդ').querySelector('strong').textContent, '3');
+        assert.equal(metric(view.root, 'Ժամկետանց LOT').querySelector('strong').textContent, '2');
         assert.deepEqual([...view.root.querySelectorAll('.dashboard-activity-row strong')].map((element) => element.textContent), ['8', '6', '2', '1']);
         assert.equal(view.root.querySelector('[role="status"]'), null);
         assert.equal(user.location_id, 0, 'dashboard selection does not change the authenticated user context');
@@ -207,6 +212,8 @@ for (const [label, locationId, permissions] of [
             await settle();
             assert.equal(view.root.querySelector('select'), null);
             assert.equal(heroLocation(view.root), locations.find((location) => location.id === locationId).name);
+            assert.equal(metric(view.root, 'Զրոյական մնացորդ').querySelector('strong').textContent, '1');
+            assert.equal(metric(view.root, 'Ժամկետանց LOT'), undefined, 'expiry totals require expiry visibility even when the response contains them');
             window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
             assert.deepEqual(calls, [{}, {}], 'an unselectable dashboard never sends a location override');
         } finally { view.unmount(); }
