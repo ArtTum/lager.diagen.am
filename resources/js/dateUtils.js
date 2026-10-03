@@ -11,6 +11,21 @@ export function toIsoDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+const armenianMonths = ['Հունվար', 'Փետրվար', 'Մարտ', 'Ապրիլ', 'Մայիս', 'Հունիս', 'Հուլիս', 'Օգոստոս', 'Սեպտեմբեր', 'Հոկտեմբեր', 'Նոյեմբեր', 'Դեկտեմբեր'];
+const armenianMonthDates = ['հունվարի', 'փետրվարի', 'մարտի', 'ապրիլի', 'մայիսի', 'հունիսի', 'հուլիսի', 'օգոստոսի', 'սեպտեմբերի', 'հոկտեմբերի', 'նոյեմբերի', 'դեկտեմբերի'];
+const armenianWeekdays = ['Կիրակի', 'Երկուշաբթի', 'Երեքշաբթի', 'Չորեքշաբթի', 'Հինգշաբթի', 'Ուրբաթ', 'Շաբաթ'];
+
+// Some browser runtimes fall back to English for hy-AM date formatting.
+export function formatArmenianMonth(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '—';
+    return `${armenianMonths[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+export function formatArmenianLongDate(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '—';
+    return `${armenianWeekdays[date.getDay()]}, ${date.getDate()} ${armenianMonthDates[date.getMonth()]} ${date.getFullYear()} թ.`;
+}
+
 /** Defaults on business documents use the same timezone as displayed API dates. */
 export function todayIsoDate(now = new Date()) {
     const parts = new Intl.DateTimeFormat('en-GB', {

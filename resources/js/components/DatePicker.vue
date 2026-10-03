@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppIcon from './AppIcon.vue';
-import { displayIsoDate, parseDisplayDate, parseIsoDate, toIsoDate } from '../dateUtils';
+import { displayIsoDate, formatArmenianLongDate, formatArmenianMonth, parseDisplayDate, parseIsoDate, toIsoDate } from '../dateUtils';
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -32,14 +32,14 @@ const monthDays = computed(() => {
       inMonth: date.getMonth() === first.getMonth(),
       selected: toIsoDate(date) === props.modelValue,
       today: toIsoDate(date) === toIsoDate(new Date()),
-      disabled: (props.min && toIsoDate(date) < props.min) || (props.max && toIsoDate(date) > props.max),
+      disabled: Boolean((props.min && toIsoDate(date) < props.min) || (props.max && toIsoDate(date) > props.max)),
     };
   });
 });
-const monthTitle = computed(() => new Intl.DateTimeFormat('hy-AM', { month: 'long', year: 'numeric' }).format(month.value));
+const monthTitle = computed(() => formatArmenianMonth(month.value));
 
 function monthStart(date) { return new Date(date.getFullYear(), date.getMonth(), 1); }
-function formatLong(date) { return new Intl.DateTimeFormat('hy-AM', { dateStyle: 'full' }).format(date); }
+function formatLong(date) { return formatArmenianLongDate(date); }
 function isAllowed(date) {
   const iso = toIsoDate(date);
   return (!props.min || iso >= props.min) && (!props.max || iso <= props.max);
@@ -142,7 +142,7 @@ onBeforeUnmount(close);
   </div>
   <Teleport to="body">
     <section v-if="isOpen" class="date-picker-popover" :style="popoverStyle" role="dialog" aria-label="Օրացույց">
-      <header class="date-picker-head"><span class="date-picker-badge"><svg class="date-picker-calendar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="3"/><path d="M8 3v4M16 3v4M4 10h16M8 14h2M14 14h2M8 18h2"/></svg></span><div><small>ՕՐԱՑՈՒՅՑ</small><strong>ՕՕ.ԱԱ.ՏՏՏՏ</strong></div><button class="date-picker-close" type="button" aria-label="Փակել օրացույցը" @click="close"><AppIcon name="xmark" /></button></header>
+      <header class="date-picker-head"><span class="date-picker-badge"><svg class="date-picker-calendar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="3"/><path d="M8 3v4M16 3v4M4 10h16M8 14h2M14 14h2M8 18h2"/></svg></span><div><small>ՕՐԱՑՈՒՅՑ</small><strong>{{ displayIsoDate(modelValue) || 'Ընտրեք ամսաթիվը' }}</strong></div><button class="date-picker-close" type="button" aria-label="Փակել օրացույցը" @click="close"><AppIcon name="xmark" /></button></header>
       <div class="date-picker-month"><button type="button" aria-label="Նախորդ ամիս" @click="shiftMonth(-1)"><AppIcon name="arrowLeft" /></button><strong>{{ monthTitle }}</strong><button type="button" aria-label="Հաջորդ ամիս" @click="shiftMonth(1)"><AppIcon name="arrowRight" /></button></div>
       <div class="date-picker-weekdays" role="row"><span v-for="day in weekdayNames" :key="day">{{ day }}</span></div>
       <div class="date-picker-days" role="grid"><button v-for="day in monthDays" :key="day.key" type="button" role="gridcell" :disabled="day.disabled" :aria-label="formatLong(day.date)" :aria-pressed="day.selected" :class="{ 'is-outside': !day.inMonth, 'is-selected': day.selected, 'is-today': day.today }" @click="choose(day.date)">{{ day.date.getDate() }}<i v-if="day.today"></i></button></div>

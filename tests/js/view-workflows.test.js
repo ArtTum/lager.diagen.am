@@ -130,6 +130,77 @@ test('date-picker validity follows changing minimum and maximum dates including 
     } finally { view.unmount(); }
 });
 
+for (const scenario of [
+    { label: 'minimum only', min: '2026-10-10', max: '', blocked: [9], allowed: [10, 20], chosen: 20 },
+    { label: 'maximum only', min: '', max: '2026-10-20', blocked: [21], allowed: [5, 20], chosen: 5 },
+    { label: 'both inclusive bounds', min: '2026-10-10', max: '2026-10-20', blocked: [9, 21], allowed: [10, 15, 20], chosen: 20 },
+    { label: 'no bounds', min: '', max: '', blocked: [], allowed: [1, 15, 31], chosen: 31 },
+]) {
+    test(`date-picker calendar permits an allowed day with ${scenario.label} and emits its ISO date`, async () => {
+        const DatePicker = component('components/DatePicker.vue', { './AppIcon.vue': stub, '../dateUtils': dateUtils });
+        const state = Vue.reactive({ value: '2026-10-15' }); const emitted = [];
+        const view = mount({ setup: () => () => Vue.h(DatePicker, {
+            modelValue: state.value, min: scenario.min, max: scenario.max,
+            'onUpdate:modelValue': (value) => { emitted.push(value); state.value = value; },
+        }) });
+        try {
+            await settle(); view.root.querySelector('.date-picker-trigger').click(); await settle();
+            const calendar = document.querySelector('.date-picker-popover');
+            assert.ok(calendar);
+            assert.match(calendar.querySelector('.date-picker-month strong').textContent, /հոկտեմբեր/iu);
+            assert.match(calendar.querySelector('.date-picker-month strong').textContent, /2026/);
+            assert.notEqual(calendar.querySelector('.date-picker-head strong').textContent, 'ՕՕ.ԱԱ.ՏՏՏՏ');
+            const days = [...calendar.querySelectorAll('.date-picker-days button:not(.is-outside)')];
+            const day = (number) => days.find((button) => button.textContent.trim() === String(number));
+            for (const blocked of scenario.blocked) {
+                assert.equal(day(blocked).disabled, true, `day ${blocked} is outside the permitted range`);
+                day(blocked).click(); await settle();
+                assert.deepEqual(emitted, [], 'clicking a disabled date does not emit a value');
+            }
+            for (const allowed of scenario.allowed) {
+                assert.equal(day(allowed).disabled, false, `day ${allowed} remains selectable`);
+                assert.equal(day(allowed).hasAttribute('disabled'), false, 'an empty Boolean attribute must not disable an allowed day');
+            }
+            if (!scenario.min && !scenario.max) {
+                assert.ok([...calendar.querySelectorAll('.date-picker-days button')].every((button) => !button.disabled), 'an unrestricted calendar also permits adjacent-month dates');
+            }
+            assert.match(day(scenario.chosen).getAttribute('aria-label'), /[Ա-Ֆա-ֆ]/u);
+            assert.doesNotMatch(day(scenario.chosen).getAttribute('aria-label'), /October|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/i);
+            day(scenario.chosen).click(); await settle();
+            const expected = `2026-10-${String(scenario.chosen).padStart(2, '0')}`;
+            assert.deepEqual(emitted, [expected]);
+            assert.equal(state.value, expected);
+            assert.equal(view.root.querySelector('input').value, `${String(scenario.chosen).padStart(2, '0')}.10.2026`);
+            assert.equal(document.querySelector('.date-picker-popover'), null, 'choosing an allowed day closes the calendar');
+        } finally { view.unmount(); }
+    });
+}
+
+test('an empty minimum-only expected receipt field can select a future day from the calendar', async () => {
+    const DatePicker = component('components/DatePicker.vue', { './AppIcon.vue': stub, '../dateUtils': dateUtils });
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const state = Vue.reactive({ value: '' });
+    const view = mount({ setup: () => () => Vue.h(DatePicker, {
+        modelValue: state.value, min: dateUtils.toIsoDate(today),
+        'onUpdate:modelValue': (value) => { state.value = value; },
+    }) });
+    try {
+        await settle(); view.root.querySelector('.date-picker-trigger').click(); await settle();
+        assert.equal(document.querySelector('.date-picker-head strong').textContent, 'Ընտրեք ամսաթիվը');
+        if (tomorrow.getMonth() !== today.getMonth()) {
+            document.querySelector('.date-picker-month button[aria-label="Հաջորդ ամիս"]').click(); await settle();
+        }
+        const futureDay = [...document.querySelectorAll('.date-picker-days button:not(.is-outside)')].find((button) => button.textContent.trim() === String(tomorrow.getDate()));
+        assert.equal(futureDay.disabled, false);
+        futureDay.click(); await settle();
+        assert.equal(state.value, dateUtils.toIsoDate(tomorrow));
+        assert.equal(view.root.querySelector('input').value, dateUtils.displayIsoDate(state.value));
+        view.root.querySelector('.date-picker-trigger').click(); await settle();
+        assert.equal(document.querySelector('.date-picker-head strong').textContent, view.root.querySelector('input').value, 'the reopened header shows the selected date');
+    } finally { view.unmount(); }
+});
+
 test('supplier viewers see history but no create, edit or deactivate controls', async () => {
     const supplier = { id: 1, name: 'Supplier', active: true, tax_id: '123', address: 'Address', contact_name: 'Contact', phone: '123', email: 'mail@example.test', contract_no: 'Contract', contract_start: '2026-10-01', contract_end: '2026-11-01', payment_terms: 'Cash', delivery_days: 0 };
     const view = await mountView('views/suppliers/Index.vue', '/suppliers', { async get() { return { data: { data: [supplier], total: 1, current_page: 1, per_page: 15, last_page: 1 } }; } }, { permissions: { 'suppliers.view': true } });
