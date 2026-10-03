@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
-use App\Models\User;
 use App\Models\Branch;
 use App\Models\Supplier;
+use App\Models\User;
 use App\Repositories\PageDataRepository;
+use App\Support\WorkflowStatus;
 use Illuminate\Database\Eloquent\Builder;
 
 class PageDataService
@@ -143,7 +144,7 @@ class PageDataService
     private function exportValue(string $page, string $key, mixed $value): mixed
     {
         if ($key === 'active') {
-            return (bool) $value ? 'Ակտիվ' : 'Ապաակտիվ';
+            return WorkflowStatus::label('activity', (bool) $value ? 'active' : 'inactive');
         }
         if ($key === 'urgency') {
             return ['normal' => 'Սովորական', 'high' => 'Բարձր', 'urgent' => 'Շտապ'][$value] ?? $value;
@@ -152,12 +153,6 @@ class PageDataService
             return $value;
         }
 
-        return [
-            'pending' => 'Սպասում է հաստատման', 'stock_shortage' => 'Սպասում է պաշարի համալրման', 'draft' => 'Սևագիր', 'sent' => 'Ուղարկված',
-            'review' => 'Ստուգման փուլում', 'approved' => 'Հաստատված', 'partially_approved' => 'Մասնակի հաստատված',
-            'collecting' => 'Հավաքագրվում է', 'ready_to_ship' => 'Պատրաստ է առաքման', 'shipped' => 'Ուղարկված է',
-            'received' => 'Ստացված է', 'closed' => 'Փակված', 'open' => 'Հաշվարկման փուլում',
-            'counted' => 'Սպասում է հաստատման', 'completed' => 'Ավարտված', 'cancelled' => 'Չեղարկված', 'rejected' => 'Մերժված',
-        ][$value] ?? $value;
+        return WorkflowStatus::label($page, $value);
     }
 }

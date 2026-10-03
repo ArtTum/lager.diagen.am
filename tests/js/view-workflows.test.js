@@ -24,18 +24,28 @@ function deferred() {
     return { promise, resolve };
 }
 
+function loadSourceDependency(name, dependencies, importer) {
+    if (Object.hasOwn(dependencies, name)) return dependencies[name];
+    if (name === '@/composables/useLiveRefresh') return liveRefresh.exports;
+    if (!name.startsWith('@/') && !name.startsWith('.')) return require(name);
+    const root = new URL('../../resources/js/', import.meta.url);
+    const filename = name.startsWith('@/') ? new URL(name.slice(2), root) : new URL(name, importer);
+    if (!/\.(vue|js|json)$/.test(filename.pathname)) filename.pathname += '.js';
+    if (filename.pathname.endsWith('.vue')) return component(filename.pathname.slice(root.pathname.length), dependencies);
+    if (filename.pathname.endsWith('.json')) return JSON.parse(readFileSync(filename, 'utf8'));
+    const module = { exports: {} };
+    const code = transformSync(readFileSync(filename, 'utf8'), { format: 'cjs' }).code;
+    new Function('require', 'module', 'exports', code)((child) => loadSourceDependency(child, dependencies, filename), module, module.exports);
+    return module.exports;
+}
+
 function component(relativePath, dependencies = {}) {
     const filename = new URL(`../../resources/js/${relativePath}`, import.meta.url);
     const { descriptor } = parse(readFileSync(filename, 'utf8'), { filename: filename.pathname });
     const script = compileScript(descriptor, { id: relativePath, inlineTemplate: true });
     const { code } = transformSync(script.content, { format: 'cjs', loader: 'js' });
     const module = { exports: {} };
-    const loadDependency = (name) => {
-        if (Object.hasOwn(dependencies, name)) return dependencies[name];
-        if (name === '@/composables/useLiveRefresh') return liveRefresh.exports;
-        if (name.startsWith('@/') && name.endsWith('.vue')) return component(name.slice(2), dependencies);
-        return require(name);
-    };
+    const loadDependency = (name) => loadSourceDependency(name, dependencies, filename);
     new Function('require', 'module', 'exports', code)(loadDependency, module, module.exports);
     return module.exports.default;
 }
@@ -58,7 +68,7 @@ async function mountView(relativePath, path, api, user = {}, dependencies = {}) 
     });
     const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
         { path, component: stub, meta: { title: 'Audit scenario' } },
-        ...['/stock', '/stock/matrix'].filter((candidate) => candidate !== path).map((candidate) => ({ path: candidate, component: stub })),
+        ...['/stock', '/stock/matrix', '/requests/:request/dispatch'].filter((candidate) => candidate !== path).map((candidate) => ({ path: candidate, component: stub })),
     ] });
     await router.push(path);
     return mount(definition, router);
@@ -521,6 +531,8 @@ test('independent inventory approval excludes the current starter and still requ
         try {
             await settle();
             const rows = [...view.root.querySelectorAll('tbody tr')];
+            assert.match(rows[0].querySelector('.workflow-state-note').textContent, /Դուք եք սկսել/);
+            assert.match(rows[1].querySelector('.workflow-state-note').textContent, /սկսածից տարբեր աշխատակից/);
             for (const row of rows) {
                 const approve = [...row.querySelectorAll('button')].find((button) => button.textContent === 'Անկախ հաստատել');
                 assert.equal(Boolean(approve), allowed && row.textContent.includes('PEER-COUNTED'), row.textContent);
@@ -529,6 +541,74 @@ test('independent inventory approval excludes the current starter and still requ
                 view.root.querySelector('tbody .primary-button').click(); await settle();
                 assert.match(view.root.querySelector('.confirm-card').textContent, /PEER-COUNTED/);
             }
+        } finally { view.unmount(); }
+    }
+});
+
+test('request statuses distinguish review submission from goods shipment while filters keep their API codes and review permission', async () => {
+    const records = [
+        { id: 1, request_no: 'AWAITING-REVIEW', status: 'sent', branch_id: 2, branch: 'Branch two', urgency: 'normal' },
+        { id: 2, request_no: 'GOODS-SHIPPED', status: 'shipped', branch_id: 2, branch: 'Branch two', urgency: 'normal' },
+    ];
+    const calls = []; const user = { id: 7, location_id: 0, permissions: { 'requests.view': true, 'requests.approve': true } };
+    const FilterBar = component('components/ListFilterBar.vue', { '@/components/AppIcon.vue': stub });
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint, { params }) {
+            assert.equal(endpoint, 'pages/requests'); calls.push(structuredClone(params));
+            return list(records.filter((row) => !params.status || row.status === params.status));
+        },
+    }, user, { '@/components/ListFilterBar.vue': FilterBar });
+    try {
+        await settle();
+        const sent = view.root.querySelector('tbody [data-status="sent"]');
+        const shipped = view.root.querySelector('tbody [data-status="shipped"]');
+        assert.equal(sent.querySelector('.workflow-status').textContent, 'Սպասում է ստուգման');
+        assert.equal(shipped.querySelector('.workflow-status').textContent, 'Ապրանքն ուղարկված է');
+        assert.match(sent.querySelector('.workflow-state-note').textContent, /Ապրանքը դեռ չի ուղարկվել/);
+        assert.match(shipped.querySelector('.workflow-state-note').textContent, /հաստատի ընդունումը/);
+        const select = view.root.querySelector('.list-filter-bar select');
+        assert.equal(select.querySelector('option[value="sent"]').textContent, sent.querySelector('.workflow-status').textContent);
+        assert.equal(select.querySelector('option[value="shipped"]').textContent, shipped.querySelector('.workflow-status').textContent);
+        change(select, 'shipped'); submit(view.root.querySelector('.list-filter-bar')); await settle();
+        assert.equal(calls.at(-1).status, 'shipped');
+        assert.equal(view.root.querySelectorAll('tbody tr').length, 1);
+        assert.ok(view.root.querySelector('tbody [data-status="shipped"]'));
+        change(select, 'sent'); submit(view.root.querySelector('.list-filter-bar')); await settle();
+        assert.equal(calls.at(-1).status, 'sent');
+        assert.ok([...view.root.querySelectorAll('tbody button')].some((button) => button.textContent === 'Վերցնել ստուգման'));
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: { 'requests.view': true } } })); await settle();
+        assert.equal(view.root.querySelector('tbody button'), null, 'clearer badges do not grant workflow actions to a viewer');
+        assert.equal(view.root.querySelector('tbody .workflow-status').textContent, 'Սպասում է ստուգման');
+        const guide = view.root.querySelector('.workflow-guide');
+        assert.equal(guide.open, false);
+        guide.querySelector('summary').click(); await settle();
+        assert.equal(guide.open, true);
+        assert.ok(guide.querySelector('[data-status="sent"]'));
+        assert.ok(guide.querySelector('[data-status="shipped"]'));
+    } finally { view.unmount(); }
+});
+
+test('the same approved API code keeps its purchase and transfer meaning in badges and status filters', async () => {
+    const FilterBar = component('components/ListFilterBar.vue', { '@/components/AppIcon.vue': stub });
+    for (const { module, label } of [
+        { module: 'purchases', label: 'Գնումը հաստատված է' },
+        { module: 'transfers', label: 'Պատրաստ է ուղարկման' },
+    ]) {
+        const calls = [];
+        const view = await mountView(`views/${module === 'purchases' ? 'purchasing' : module}/Index.vue`, `/${module}`, {
+            async get(endpoint, { params }) {
+                assert.equal(endpoint, `pages/${module}`); calls.push(structuredClone(params));
+                return list([{ id: 1, order_no: 'ORDER-1', transfer_no: 'TRANSFER-1', status: 'approved' }], { status: 'Կարգավիճակ' });
+            },
+        }, { location_id: 0, permissions: { [`${module}.view`]: true } }, { '@/components/ListFilterBar.vue': FilterBar });
+        try {
+            await settle();
+            assert.equal(view.root.querySelector('tbody [data-status="approved"] .workflow-status').textContent, label);
+            const select = view.root.querySelector('.list-filter-bar select');
+            assert.equal(select.querySelector('option[value="approved"]').textContent, label);
+            change(select, 'approved'); submit(view.root.querySelector('.list-filter-bar')); await settle();
+            assert.equal(calls.at(-1).status, 'approved');
+            assert.equal(view.root.querySelector('tbody button'), null, 'status context does not change view-only action permissions');
         } finally { view.unmount(); }
     }
 });

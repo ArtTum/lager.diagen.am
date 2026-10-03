@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import ExportActions from '@/components/ExportActions.vue';
 import { formatDisplayDate, isDateValue } from '@/dateUtils';
+import StatusBadge from '@/components/StatusBadge.vue';
 
 const route = useRoute();
 const result = ref(null);
@@ -38,7 +39,6 @@ onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(timer); });
 function display(value, key) {
     if (value === null || value === undefined || value === '') return '—';
     if (/(?:_at|_on|_date)$/.test(key) || key === 'date' || isDateValue(value)) return formatDisplayDate(value);
-    if (key === 'active') return Number(value) ? 'Ակտիվ' : 'Ապաակտիվ';
     if (['quantity', 'qty', 'min_qty', 'stock_value', 'unit_cost'].includes(key) && !Number.isNaN(Number(value))) {
         return new Intl.NumberFormat('hy-AM', { maximumFractionDigits: 3 }).format(Number(value));
     }
@@ -53,7 +53,7 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
     <section class="table-card">
         <div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել ցանկում…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions :page="route.path.slice(1)" :search="search" :disabled="busy" /></div>
         <div class="table-scroll"><table class="data-table"><thead><tr><th v-for="(label, key) in result?.columns || {}" :key="key">{{ label }}</th></tr></thead><tbody>
-            <tr v-for="row in result?.data || []" :key="row.id || row.movement_no || row.request_no || row.receipt_no || row.inventory_no"><td v-for="(label, key) in result?.columns || {}" :key="key"><span v-if="key === 'active'" class="status-pill" :class="{ inactive: !Number(row[key]) }">{{ display(row[key], key) }}</span><strong v-else-if="key === 'name' || key.endsWith('_no')">{{ display(row[key], key) }}</strong><span v-else>{{ display(row[key], key) }}</span></td></tr>
+            <tr v-for="row in result?.data || []" :key="row.id || row.movement_no || row.request_no || row.receipt_no || row.inventory_no"><td v-for="(label, key) in result?.columns || {}" :key="key"><StatusBadge v-if="key === 'active'" workflow="activity" :status="Number(row[key]) ? 'active' : 'inactive'" :show-description="false" /><StatusBadge v-else-if="key === 'status'" :workflow="route.path.slice(1)" :status="row[key]" /><strong v-else-if="key === 'name' || key.endsWith('_no')">{{ display(row[key], key) }}</strong><span v-else>{{ display(row[key], key) }}</span></td></tr>
             <tr v-if="!busy && result && !result.data.length"><td :colspan="Object.keys(result.columns).length" class="table-empty">{{ search ? 'Որոնմանը համապատասխան գրառում չկա։' : 'Գրառումներ դեռ չկան։' }}</td></tr>
             <tr v-if="busy && !result"><td colspan="8" class="table-empty">Բեռնվում է…</td></tr>
         </tbody></table></div>

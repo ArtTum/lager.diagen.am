@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\ReportRepository;
+use App\Support\WorkflowStatus;
 use Illuminate\Validation\ValidationException;
 
 class ReportService
@@ -112,9 +113,12 @@ class ReportService
             'headers' => array_values($columns),
             'column_keys' => $keys,
             'query' => $query,
-            'rows' => (function () use ($query, $keys): \Generator {
+            'rows' => (function () use ($query, $keys, $type): \Generator {
                 foreach ($query->cursor() as $row) {
                     $values = $this->projectRow($row, $keys);
+                    if (array_key_exists('status', $values)) {
+                        $values['status'] = WorkflowStatus::label(WorkflowStatus::workflowFromReport($type), $values['status']);
+                    }
                     yield array_map(static fn (string $key): mixed => $values[$key] ?? null, $keys);
                 }
             })(),

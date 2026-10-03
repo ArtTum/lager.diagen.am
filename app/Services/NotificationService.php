@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\NotificationRepository;
+use App\Support\WorkflowStatus;
 use Illuminate\Validation\ValidationException;
 
 class NotificationService
@@ -14,8 +15,9 @@ class NotificationService
     {
         $location = (int) $actor->currentLocationId();
         $items = [];
-        $add = static function (string $title, string $detail, string $link, string $tone = 'amber') use (&$items): void {
-            $items[] = ['title' => $title, 'detail' => $detail, 'link' => $link, 'tone' => $tone];
+        $add = static function (string $title, string $detail, string $link, string $tone = 'amber', ?string $identity = null) use (&$items): void {
+            $items[] = ['title' => $title, 'detail' => $detail, 'link' => $link, 'tone' => $tone,
+                'key' => sha1($identity ?? $title.'|'.$detail.'|'.$link)];
         };
 
         if ($actor->hasPermissionCode('stock.view')) {
@@ -47,8 +49,12 @@ class NotificationService
                 $add('Սպասվում է ստացման հաստատում', $row->request_no.' · ուղարկվել է '.optional($row->sent_at)->format('d.m.Y'), '/requests', 'violet');
             }
             foreach ($this->notifications->recentlyUpdatedRequests($location) as $row) {
-                $title = $row->status === 'rejected' ? 'Պահանջագիրը մերժվել է' : (in_array($row->status, ['approved', 'partially_approved'], true) ? 'Պահանջագիրը հաստատվել է' : 'Պահանջագրի ընթացքը թարմացվել է');
-                $add($title, $row->request_no.' · '.($row->rejection_reason ?: $row->status), '/requests', $row->status === 'rejected' ? 'red' : 'green');
+                // Keep the original identity so wording changes preserve read state and sound deduplication.
+                $legacyTitle = $row->status === 'rejected' ? 'Պահանջագիրը մերժվել է' : (in_array($row->status, ['approved', 'partially_approved'], true) ? 'Պահանջագիրը հաստատվել է' : 'Պահանջագրի ընթացքը թարմացվել է');
+                $legacyDetail = $row->request_no.' · '.($row->rejection_reason ?: $row->status);
+                $title = $row->status === 'partially_approved' ? 'Պահանջագիրը մասնակի է հաստատվել' : $legacyTitle;
+                $detail = $row->request_no.' · '.($row->rejection_reason ?: WorkflowStatus::label('requests', $row->status));
+                $add($title, $detail, '/requests', $row->status === 'rejected' ? 'red' : 'green', $legacyTitle.'|'.$legacyDetail.'|/requests');
             }
         }
         if ($actor->hasPermissionCode('inventory.view')) {
@@ -69,10 +75,6 @@ class NotificationService
         }
 
         $items = array_slice($items, 0, 300);
-        foreach ($items as &$item) {
-            $item['key'] = sha1($item['title'].'|'.$item['detail'].'|'.$item['link']);
-        }
-        unset($item);
         $readKeys = $this->notifications->readKeys((int) $actor->id, array_column($items, 'key'));
         $read = array_fill_keys($readKeys, true);
         foreach ($items as &$item) {

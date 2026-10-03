@@ -8,6 +8,9 @@ import { currentUser } from '@/router';
 import ExportActions from '@/components/ExportActions.vue';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 import { formatDisplayDate } from '@/dateUtils';
+import { statusOptions } from '@/workflowStatus';
+import StatusBadge from '@/components/StatusBadge.vue';
+import WorkflowStatusGuide from '@/components/WorkflowStatusGuide.vue';
 
 const route = useRoute();
 const user = ref(currentUser());
@@ -24,7 +27,7 @@ const dialog = ref('');
 const suppliers = ref([]);
 const locations = computed(() => result.value?.locations || []);
 const rows = computed(() => result.value?.data || []);
-const filterSelects = [{ key: 'status', label: 'Կարգավիճակ', allLabel: 'Բոլոր փուլերը', options: [{ value: 'open', label: 'Հաշվարկման փուլում' }, { value: 'counted', label: 'Սպասում է հաստատման' }, { value: 'closed', label: 'Փակված' }] }];
+const filterSelects = [{ key: 'status', label: 'Կարգավիճակ', allLabel: 'Բոլոր փուլերը', options: statusOptions('inventory') }];
 const visibleLines = computed(() => {
   const lines = selected.value?.lines || [];
   const query = lineSearch.value.trim().toLocaleLowerCase('hy-AM');
@@ -131,17 +134,22 @@ async function approve() {
   } catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գույքագրումը չհաստատվեց։'; }
   finally { saving.value = false; }
 }
-function status(value) { return ({ open: 'Հաշվարկման փուլում', counted: 'Սպասում է հաստատման', closed: 'Փակված' })[value] || value; }
+function statusDescription(row) {
+  return row.status === 'counted' && Number(row.started_by) === Number(user.value?.id)
+    ? 'Դուք եք սկսել այս գույքագրումը։ Այն պետք է հաստատի մեկ այլ աշխատակից՝ հաստատման իրավունքով։'
+    : undefined;
+}
 useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
 
 <template>
   <div class="page-heading"><div><p class="eyebrow">ՊԱՇԱՐԻ ՎԵՐԱՀՍԿՈՒՄ</p><h1>{{ route.meta.title }}</h1><p class="muted">Հաշվառեք LOT-երով մնացորդները և տարբերությունները կիրառեք միայն անկախ հաստատումից հետո։</p></div><button v-if="can('inventory.create')" class="primary-button" @click="openStart"><AppIcon name="add" /> Սկսել գույքագրում</button></div>
   <div v-if="error && !dialog" class="alert-error" role="alert">{{ error }}</div><div v-if="notice" class="notice-success" role="status">{{ notice }}</div>
+  <WorkflowStatusGuide workflow="inventory" />
   <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով կամ պահեստով…"></label><div class="list-count">Գրառումներ՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions page="inventory" endpoint="inventory/export" :search="search" :filters="filters" :disabled="busy" /></div>
     <ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
     <div class="table-scroll"><table class="data-table"><thead><tr><th>Համար</th><th>Պահեստ</th><th>Տողեր</th><th>Սկսել է</th><th>Ամսաթիվ</th><th>Կարգավիճակ</th><th>Գործողություն</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.inventory_no }}</strong></td><td>{{ row.location?.name || 'Կենտրոնական պահեստ' }}</td><td>{{ row.counted_lines_count }}/{{ row.lines_count }}</td><td>{{ row.starter?.name || '—' }}</td><td>{{ formatDisplayDate(row.started_at) }}</td><td><span class="workflow-status" :class="`state-${row.status}`">{{ status(row.status) }}</span></td><td><div class="table-actions"><button v-if="['open','counted'].includes(row.status) && row.lines_count > 0 && can('inventory.edit')" class="secondary-button compact-action" @click="openCount(row)">{{ row.status === 'counted' ? 'Դիտել հաշվարկը' : 'Լրացնել քանակները' }}</button><span v-else-if="['open','counted'].includes(row.status) && row.lines_count === 0" class="workflow-status state-warning" title="Այս գրառման սկզբնական մնացորդները պահպանված չեն։ Սկսեք նոր գույքագրում։">Տողերը բացակայում են</span><button v-if="canIndependentlyApprove(row)" class="primary-button compact-action" @click="selected=row;dialog='approve';error=''">Անկախ հաստատել</button><RouterLink v-if="row.status==='closed' && can('inventory.view')" class="secondary-button compact-action" :to="`/inventory/${row.id}/act`">Տպել ակտը</RouterLink></div></td></tr>
+      <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.inventory_no }}</strong></td><td>{{ row.location?.name || 'Կենտրոնական պահեստ' }}</td><td>{{ row.counted_lines_count }}/{{ row.lines_count }}</td><td>{{ row.starter?.name || '—' }}</td><td>{{ formatDisplayDate(row.started_at) }}</td><td><StatusBadge workflow="inventory" :status="row.status" :description="statusDescription(row)" /></td><td><div class="table-actions"><button v-if="['open','counted'].includes(row.status) && row.lines_count > 0 && can('inventory.edit')" class="secondary-button compact-action" @click="openCount(row)">{{ row.status === 'counted' ? 'Դիտել հաշվարկը' : 'Լրացնել քանակները' }}</button><span v-else-if="['open','counted'].includes(row.status) && row.lines_count === 0" class="workflow-status state-warning" title="Այս գրառման սկզբնական մնացորդները պահպանված չեն։ Սկսեք նոր գույքագրում։">Տողերը բացակայում են</span><button v-if="canIndependentlyApprove(row)" class="primary-button compact-action" @click="selected=row;dialog='approve';error=''">Անկախ հաստատել</button><RouterLink v-if="row.status==='closed' && can('inventory.view')" class="secondary-button compact-action" :to="`/inventory/${row.id}/act`">Տպել ակտը</RouterLink></div></td></tr>
       <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">Գույքագրման գրառումներ չկան։ Սկսեք առաջին գույքագրումը։</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
     </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 

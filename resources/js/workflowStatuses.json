@@ -1,0 +1,59 @@
+{
+  "requests": {
+    "draft": { "label": "Սևագիր", "description": "Պահանջը դեռ չի ներկայացվել։ Կարելի է խմբագրել և ուղարկել ստուգման։", "tone": "neutral" },
+    "sent": { "label": "Սպասում է ստուգման", "description": "Պահանջը ներկայացվել է կենտրոնական պահեստ։ Ապրանքը դեռ չի ուղարկվել։", "tone": "waiting" },
+    "review": { "label": "Ստուգվում է", "description": "Պատասխանատուն ստուգում է ապրանքներն ու հաստատվող քանակները։", "tone": "progress" },
+    "approved": { "label": "Հաստատված է", "description": "Հաստատվել է ամբողջ պահանջված քանակը։ Հաջորդը՝ պատրաստել ապրանքները։", "tone": "success" },
+    "partially_approved": { "label": "Մասնակի է հաստատված", "description": "Հաստատվել է պահանջի մի մասը։ Ուղարկվելու է միայն հաստատված քանակը։", "tone": "partial" },
+    "collecting": { "label": "Ապրանքները պատրաստվում են", "description": "Կենտրոնական պահեստը հավաքում է հաստատված ապրանքները՝ ուղարկելու համար։", "tone": "progress" },
+    "ready_to_ship": { "label": "Պատրաստ է ուղարկման", "description": "Ապրանքները պատրաստ են։ Հաջորդը՝ ուղարկել մասնաճյուղ։", "tone": "progress" },
+    "shipped": { "label": "Ապրանքն ուղարկված է", "description": "Մասնաճյուղը պետք է ստանալուց հետո հաստատի ընդունումը։", "tone": "shipping" },
+    "received": { "label": "Ստացումը հաստատված է", "description": "Մասնաճյուղի մնացորդը թարմացվել է։ Հաջորդը՝ ավարտել պահանջագիրը։", "tone": "success" },
+    "closed": { "label": "Ավարտված է", "description": "Ապրանքը ստացվել է, պահանջագրի աշխատանքն ավարտված է։", "tone": "success" },
+    "cancelled": { "label": "Չեղարկված է", "description": "Պահանջագիրը չի շարունակվում։ Ապրանք չի ուղարկվել։", "tone": "neutral" },
+    "rejected": { "label": "Մերժված է", "description": "Պահանջը չի հաստատվել և չի ուղարկվելու։", "tone": "error" }
+  },
+  "transfers": {
+    "pending": { "label": "Սպասում է հաստատման", "description": "Պատասխանատուն պետք է ստուգի տեղափոխումն ու ապրանքի առկայությունը։", "tone": "waiting" },
+    "stock_shortage": { "label": "Պաշարը չի բավարարում", "description": "Ուղարկող պահեստում ազատ քանակը պակաս է։ Համալրելուց հետո կրկին հաստատեք։", "tone": "waiting" },
+    "approved": { "label": "Պատրաստ է ուղարկման", "description": "Տեղափոխումը հաստատված է։ Հաջորդը՝ ուղարկել ստացող պահեստ։", "tone": "progress" },
+    "shipped": { "label": "Ապրանքն ուղարկված է", "description": "Ստացող պահեստը պետք է ստանալուց հետո հաստատի ընդունումը։", "tone": "shipping" },
+    "completed": { "label": "Տեղափոխումն ավարտված է", "description": "Ստացող պահեստը հաստատել է ընդունումը, մնացորդները թարմացվել են։", "tone": "success" },
+    "rejected": { "label": "Մերժված է", "description": "Տեղափոխումը չի հաստատվել։", "tone": "error", "filter": false }
+  },
+  "purchases": {
+    "pending": { "label": "Սպասում է հաստատման", "description": "Պատվերը պետք է հաստատվի՝ ապրանքի մուտքը գրանցելուց առաջ։", "tone": "waiting" },
+    "approved": { "label": "Գնումը հաստատված է", "description": "Այս պատվերի հիման վրա կարելի է գրանցել ստացված ապրանքը։", "tone": "success" },
+    "completed": { "label": "Ավարտված է", "description": "Գնման պատվերն ավարտված է։", "tone": "success", "filter": false },
+    "cancelled": { "label": "Չեղարկված է", "description": "Գնման պատվերը չի շարունակվում։", "tone": "neutral", "filter": false }
+  },
+  "inventory": {
+    "open": { "label": "Քանակները հաշվվում են", "description": "Լրացրեք տողերի փաստացի քանակներն ու ներկայացրեք հաստատման։", "tone": "progress" },
+    "counted": { "label": "Սպասում է այլ աշխատակցի հաստատմանը", "description": "Հաշվարկը ներկայացված է։ Այն պետք է հաստատի գույքագրումը սկսածից տարբեր աշխատակից։", "tone": "waiting" },
+    "closed": { "label": "Գույքագրումն ավարտված է", "description": "Հաշվարկը հաստատված է, տարբերությունները կիրառվել են մնացորդներին։", "tone": "success" }
+  },
+  "activity": {
+    "active": { "label": "Ակտիվ", "description": "Գրառումը հասանելի է նոր գործողությունների համար։", "tone": "success" },
+    "inactive": { "label": "Անջատված", "description": "Գրառումը չի օգտագործվում նոր գործողությունների համար։", "tone": "neutral" }
+  },
+  "generic": {
+    "pending": { "label": "Սպասում է հաստատման", "description": "", "tone": "waiting" },
+    "stock_shortage": { "label": "Պաշարը չի բավարարում", "description": "", "tone": "waiting" },
+    "draft": { "label": "Սևագիր", "description": "", "tone": "neutral" },
+    "sent": { "label": "Սպասում է ստուգման", "description": "", "tone": "waiting" },
+    "review": { "label": "Ստուգվում է", "description": "", "tone": "progress" },
+    "approved": { "label": "Հաստատված է", "description": "", "tone": "success" },
+    "partially_approved": { "label": "Մասնակի է հաստատված", "description": "", "tone": "partial" },
+    "collecting": { "label": "Ապրանքները պատրաստվում են", "description": "", "tone": "progress" },
+    "ready_to_ship": { "label": "Պատրաստ է ուղարկման", "description": "", "tone": "progress" },
+    "shipped": { "label": "Ապրանքն ուղարկված է", "description": "", "tone": "shipping" },
+    "received": { "label": "Ստացումը հաստատված է", "description": "", "tone": "success" },
+    "closed": { "label": "Ավարտված է", "description": "", "tone": "success" },
+    "open": { "label": "Քանակները հաշվվում են", "description": "", "tone": "progress" },
+    "counted": { "label": "Սպասում է այլ աշխատակցի հաստատմանը", "description": "", "tone": "waiting" },
+    "completed": { "label": "Ավարտված է", "description": "", "tone": "success" },
+    "cancelled": { "label": "Չեղարկված է", "description": "", "tone": "neutral" },
+    "rejected": { "label": "Մերժված է", "description": "", "tone": "error" },
+    "posted": { "label": "Գրանցված է", "description": "", "tone": "success" }
+  }
+}

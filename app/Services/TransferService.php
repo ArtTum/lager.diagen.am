@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\TransferRepository;
+use App\Support\WorkflowStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -63,7 +64,7 @@ class TransferService
                 $this->transfers->audit((int) $actor->id, 'Տեղափոխումը սպասում է պաշարի համալրմանը', $id,
                     ['status' => $previousStatus], ['status' => 'stock_shortage', 'պակասող_ապրանքներ' => $shortages], $ip);
 
-                return 'Ազատ պաշարը դեռ չի բավարարում՝ '.implode('; ', $shortages).'. Տեղափոխումը տեղափոխվեց «Սպասում է պաշարի համալրման» փուլ։ Պաշարը համալրելուց հետո սեղմեք «Վերաստուգել պաշարը»։';
+                return 'Ազատ պաշարը դեռ չի բավարարում՝ '.implode('; ', $shortages).'. Կարգավիճակ՝ «'.WorkflowStatus::label('transfers', 'stock_shortage').'»։ Պաշարը համալրելուց հետո սեղմեք «Վերաստուգել պաշարը»։';
             }
             $this->transfers->update($id, ['status' => 'approved', 'approved_by' => $actor->id]);
             $this->transfers->audit((int) $actor->id, 'Տեղափոխումը հաստատվեց', $id, ['status' => $previousStatus], ['status' => 'approved'], $ip);

@@ -30,6 +30,22 @@ function deferred() {
     return { promise, resolve };
 }
 
+function loadSourceDependency(name, dependencies, importer) {
+    if (Object.hasOwn(dependencies, name)) return dependencies[name];
+    if (name === '@/composables/useLiveRefresh') return liveRefresh.exports;
+    if (name === '@/services/realtime') return { startRealtime: () => () => {} };
+    if (!name.startsWith('@/') && !name.startsWith('.')) return require(name);
+    const root = new URL('../../resources/js/', import.meta.url);
+    const filename = name.startsWith('@/') ? new URL(name.slice(2), root) : new URL(name, importer);
+    if (!/\.(vue|js|json)$/.test(filename.pathname)) filename.pathname += '.js';
+    if (filename.pathname.endsWith('.vue')) return component(filename.pathname.slice(root.pathname.length), dependencies);
+    if (filename.pathname.endsWith('.json')) return JSON.parse(readFileSync(filename, 'utf8'));
+    const module = { exports: {} };
+    const code = transformSync(readFileSync(filename, 'utf8'), { format: 'cjs' }).code;
+    new Function('require', 'module', 'exports', code)((child) => loadSourceDependency(child, dependencies, filename), module, module.exports);
+    return module.exports;
+}
+
 // Compile the actual SFC and replace only external services/components for each scenario.
 function component(relativePath, dependencies = {}) {
     const filename = new URL(`../../resources/js/${relativePath}`, import.meta.url);
@@ -37,7 +53,7 @@ function component(relativePath, dependencies = {}) {
     const script = compileScript(descriptor, { id: relativePath, inlineTemplate: true });
     const { code } = transformSync(script.content, { format: 'cjs', loader: 'js' });
     const module = { exports: {} };
-    const load = (name) => Object.hasOwn(dependencies, name) ? dependencies[name] : name === '@/composables/useLiveRefresh' ? liveRefresh.exports : name === '@/services/realtime' ? { startRealtime: () => () => {} } : require(name);
+    const load = (name) => loadSourceDependency(name, dependencies, filename);
     new Function('require', 'module', 'exports', code)(load, module, module.exports);
     return module.exports.default;
 }
@@ -177,6 +193,7 @@ test('navigating between purchase orders and receipts reloads the module and clo
     try {
         await settle();
         assert.match(view.root.textContent, /PURCHASE-001/);
+        assert.ok(view.root.querySelector('.workflow-guide'));
         assert.equal(userListeners.size, 3);
         view.root.querySelector('.page-heading button').click();
         await settle();
@@ -190,6 +207,7 @@ test('navigating between purchase orders and receipts reloads the module and clo
         assert.equal(view.root.querySelector('.purchase-modal'), null);
         assert.doesNotMatch(view.root.textContent, /PURCHASE-001/);
         assert.match(view.root.textContent, /RECEIPT-001/);
+        assert.equal(view.root.querySelector('.workflow-guide'), null, 'receipt records do not gain the purchase approval workflow');
         assert.equal(view.root.querySelector('.search-input input').value, '');
         assert.ok(requests.some(({ endpoint, params }) => endpoint === 'pages/receipts' && !params.search));
         assert.equal(userListeners.size, 3, 'the previous routed page must release its user and refresh listeners');

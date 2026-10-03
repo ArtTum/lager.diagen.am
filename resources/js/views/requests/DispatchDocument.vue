@@ -4,12 +4,12 @@ import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { RouterLink, useRoute } from 'vue-router';
 import api from '@/services/api';
 import { formatDisplayDate } from '@/dateUtils';
+import { statusLabel } from '@/workflowStatus';
 
 const route = useRoute();
 const document = ref(null);
 const error = ref('');
 const loading = ref(true);
-const statusLabels = { shipped: 'Ուղարկված', received: 'Ստացված', closed: 'Փակված' };
 const urgencyLabels = { normal: 'Սովորական', high: 'Բարձր', urgent: 'Շտապ' };
 const date = formatDisplayDate;
 function printDocument() {
@@ -43,7 +43,7 @@ useLiveRefresh(load, { isBusy: loading });
       <section class="dispatch-meta">
         <div><small>Մասնաճյուղ</small><strong>{{ document.branch_name || '—' }}</strong></div>
         <div><small>Պահանջող աշխատակից</small><strong>{{ document.requester_name || '—' }}</strong></div>
-        <div><small>Կարգավիճակ</small><strong>{{ statusLabels[document.status] || document.status }}</strong></div>
+        <div><small>Կարգավիճակ</small><strong>{{ statusLabel('requests', document.status) }}</strong></div>
         <div><small>Պահանջի ամսաթիվ</small><strong>{{ date(document.created_at) }}</strong></div>
         <div><small>Ուղարկող</small><strong>{{ document.sender_name || '—' }}</strong></div>
         <div><small>Ուղարկման ամսաթիվ</small><strong>{{ date(document.sent_at) }}</strong></div>

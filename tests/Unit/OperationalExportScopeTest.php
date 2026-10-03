@@ -118,7 +118,26 @@ class OperationalExportScopeTest extends TestCase
         self::assertCount(1, $rows);
         self::assertSame('INV-'.$branchB->id, $rows[0][0]);
         self::assertSame('Branch B', $rows[0][1]);
-        self::assertSame('Փակված', $rows[0][2]);
+        self::assertSame('Գույքագրումն ավարտված է', $rows[0][2]);
+    }
+
+    public function test_inventory_export_uses_shared_labels_and_preserves_unknown_codes(): void
+    {
+        $branch = Branch::query()->create(['name' => 'Branch A', 'code' => 'A']);
+        $statuses = ['open', 'counted', 'closed', 'future_phase'];
+        foreach ($statuses as $status) {
+            InventorySession::query()->create(['inventory_no' => 'INV-'.$status, 'location_id' => $branch->id, 'status' => $status]);
+        }
+        $service = new InventoryService(new InventoryRepository, $this->createMock(StockRepository::class));
+        $catalog = json_decode(file_get_contents(resource_path('js/workflowStatuses.json')), true, 512, JSON_THROW_ON_ERROR);
+
+        $rows = iterator_to_array($service->export($this->actor((int) $branch->id), [])['rows']);
+        $exported = array_column($rows, 2, 0);
+
+        foreach ($statuses as $status) {
+            self::assertSame($catalog['inventory'][$status]['label'] ?? $status, $exported['INV-'.$status]);
+        }
+        self::assertSame($statuses, InventorySession::query()->orderBy('id')->pluck('status')->all());
     }
 
     private function actor(int $location): User

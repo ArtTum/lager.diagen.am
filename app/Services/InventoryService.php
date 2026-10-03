@@ -7,6 +7,7 @@ use App\Models\InventorySession;
 use App\Models\User;
 use App\Repositories\InventoryRepository;
 use App\Repositories\StockRepository;
+use App\Support\WorkflowStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -34,7 +35,7 @@ class InventoryService
         return ['headers' => ['Գույքագրում', 'Պահեստ', 'Կարգավիճակ', 'Տողերի քանակ', 'Հաշվված տողեր', 'Սկսվել է', 'Սկսել է', 'Փակվել է', 'Հաստատել է'],
             'rows' => (function () use ($query): \Generator {
                 foreach ($query->lazy(500) as $session) {
-                    yield [$session->inventory_no, $session->location?->name ?? 'Կենտրոնական պահեստ', ['open' => 'Հաշվարկման փուլում', 'counted' => 'Սպասում է հաստատման', 'closed' => 'Փակված'][$session->status] ?? $session->status,
+                    yield [$session->inventory_no, $session->location?->name ?? 'Կենտրոնական պահեստ', WorkflowStatus::label('inventory', $session->status),
                         $session->lines_count, $session->counted_lines_count, $session->started_at?->toDateTimeString(),
                         $session->starter?->name, $session->closed_at?->toDateTimeString(), $session->approver?->name];
                 }

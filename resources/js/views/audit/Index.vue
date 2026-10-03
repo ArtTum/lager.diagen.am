@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 import { formatDisplayDate, isDateValue } from '@/dateUtils';
+import { statusLabel, workflowFromEntity } from '@/workflowStatus';
 
 const route = useRoute();
 const result = ref(null);
@@ -40,11 +41,6 @@ const fieldLabels = {
   return_no: 'Վերադարձի համար', role: 'Դեր', status: 'Կարգավիճակ', supplier_id: 'Մատակարար', tax_id: 'ՀՎՀՀ',
   title: 'Դերի անվանում', to: 'Ուր', to_branch: 'Ստացող պահեստ', to_location: 'Ստացող պահեստ', total_qty: 'Ընդհանուր քանակ',
   transfer_no: 'Տեղափոխման համար', unit: 'Չափման միավոր', unit_cost: 'Միավորի արժեք', urgency: 'Հրատապություն',
-};
-const statusLabels = {
-  approved: 'Հաստատված', cancelled: 'Չեղարկված', closed: 'Փակված', collecting: 'Հավաքագրվում է', completed: 'Ավարտված', counted: 'Հաշվարկված',
-  draft: 'Սևագիր', open: 'Բաց', partially_approved: 'Մասնակի հաստատված', pending: 'Սպասում է հաստատման', received: 'Ստացված',
-  rejected: 'Մերժված', review: 'Ստուգման փուլում', sent: 'Ուղարկված', shipped: 'Առաքված',
 };
 const moduleLabels = {
   audit: 'Գործողությունների պատմություն', branches: 'Պահեստներ և մասնաճյուղեր', dashboard: 'Գլխավոր վահանակ', expiry: 'Ժամկետների վերահսկում',
@@ -95,11 +91,11 @@ function permissionLabel(code) {
   return `${moduleLabels[module] || module} — ${permissionActionLabels[action] || action}${rest.length ? ` (${rest.join('.')})` : ''}`;
 }
 
-function displayValue(value, key = '') {
+function displayValue(value, key = '', workflow = 'generic') {
   if (value === null || value === undefined || value === '') return 'Նշված չէ';
-  if (key === 'active') return value ? 'Ակտիվ' : 'Ապաակտիվ';
+  if (key === 'active') return statusLabel('activity', Number(value) ? 'active' : 'inactive');
   if (typeof value === 'boolean') return value ? 'Այո' : 'Ոչ';
-  if (key === 'status') return statusLabels[value] || value;
+  if (key === 'status') return statusLabel(workflow, value);
   if (key === 'urgency') return ({ normal: 'Սովորական', high: 'Բարձր', urgent: 'Շտապ' })[value] || value;
   if (key === 'direction') return ({ supplier: 'Դեպի մատակարար', branch: 'Դեպի մասնաճյուղ', central: 'Դեպի կենտրոնական պահեստ' })[value] || value;
   if (key === 'issue_type') return ({ consumption: 'Օգտագործում', damage: 'Վնասվածք', expired: 'Ժամկետանց', other: 'Այլ պատճառ' })[value] || value;
@@ -115,13 +111,14 @@ function displayValue(value, key = '') {
 }
 
 function auditChanges(row) {
+  const workflow = workflowFromEntity(row.entity);
   const before = parseData(row.before_data);
   const after = parseData(row.after_data);
   const beforeObject = before && typeof before === 'object' && !Array.isArray(before) ? before : {};
   const afterObject = after && typeof after === 'object' && !Array.isArray(after) ? after : {};
   const keys = [...new Set([...Object.keys(beforeObject), ...Object.keys(afterObject)])].filter((key) => key !== 'permissions');
   const changes = keys.filter((key) => !sameValue(beforeObject[key], afterObject[key])).map((key) => ({
-    label: fieldLabel(key), before: displayValue(beforeObject[key], key), after: displayValue(afterObject[key], key),
+    label: fieldLabel(key), before: displayValue(beforeObject[key], key, workflow), after: displayValue(afterObject[key], key, workflow),
   }));
   const beforePermissions = Array.isArray(before) ? before : Array.isArray(beforeObject.permissions) ? beforeObject.permissions : [];
   const afterPermissions = Array.isArray(after) ? after : Array.isArray(afterObject.permissions) ? afterObject.permissions : [];

@@ -6,6 +6,8 @@ import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
 import { formatDisplayDate, isDateValue } from '@/dateUtils';
+import StatusBadge from '@/components/StatusBadge.vue';
+import { workflowFromReport } from '@/workflowStatus';
 
 const route = useRoute();
 const user = ref(currentUser());
@@ -37,7 +39,8 @@ const filterOptions = computed(() => result.value?.filters || {});
 const isCentralUser = computed(() => Number(user.value?.location_id || 0) === 0);
 const canSeeCosts = computed(() => Boolean(user.value?.permissions?.['purchases.view']));
 const canExport = computed(() => Boolean(user.value?.permissions?.['reports.export']));
-const selectedReport = computed(() => result.value?.report_types?.[filters.report_type] || 'Հաշվետվություն');
+const selectedReport = computed(() => result.value?.report_types?.[result.value?.report_type] || 'Հաշվետվություն');
+const statusWorkflow = computed(() => workflowFromReport(result.value?.report_type));
 const showBranchFilter = computed(() => isCentralUser.value && ['stock_by_location', 'branch_stock', 'low_stock', 'item_value', 'receipts', 'issues', 'movements', 'product_movement', 'branch_expense', 'expired_lots', 'near_expiry', 'returns', 'inventory_differences', 'branch_requests', 'rejected_requests'].includes(filters.report_type));
 const showSupplierFilter = computed(() => Boolean(filterOptions.value.suppliers) && ['stock_by_location', 'branch_stock', 'low_stock', 'item_value', 'receipts', 'issues', 'movements', 'product_movement', 'branch_expense', 'supplier_purchases', 'purchases_by_period', 'expired_lots', 'near_expiry', 'returns'].includes(filters.report_type));
 const showLotFilter = computed(() => ['receipts', 'issues', 'movements', 'product_movement', 'expired_lots', 'near_expiry'].includes(filters.report_type));
@@ -200,7 +203,7 @@ useLiveRefresh(() => load(page.value), { isBusy: loading });
           <thead><tr><th v-for="[key, label] in columns" :key="key">{{ label }}</th></tr></thead>
           <tbody>
             <tr v-for="(row, index) in rows" :key="`${row.document_no || row.code}-${row.branch_name || row.supplier || ''}-${index}`">
-              <td v-for="[key] in columns" :key="key">{{ formatCell(key, row[key]) }}</td>
+              <td v-for="[key] in columns" :key="key"><StatusBadge v-if="key === 'status'" :workflow="statusWorkflow" :status="row[key]" /><template v-else>{{ formatCell(key, row[key]) }}</template></td>
             </tr>
             <tr v-if="!loading && result && !rows.length"><td :colspan="Math.max(columns.length, 1)" class="table-empty">Ընտրված պայմաններին համապատասխան տվյալ չկա։</td></tr>
             <tr v-if="loading && !result"><td :colspan="Math.max(columns.length, 1)" class="table-empty">Հաշվետվությունը բեռնվում է…</td></tr>

@@ -8,6 +8,9 @@ import { currentUser } from '@/router';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 import ExportActions from '@/components/ExportActions.vue';
 import { formatDisplayDate } from '@/dateUtils';
+import { statusOptions } from '@/workflowStatus';
+import StatusBadge from '@/components/StatusBadge.vue';
+import WorkflowStatusGuide from '@/components/WorkflowStatusGuide.vue';
 
 const route = useRoute();
 const user = ref(currentUser());
@@ -30,7 +33,7 @@ const canApprove = computed(() => Boolean(user.value?.permissions?.['transfers.a
 const canEdit = computed(() => Boolean(user.value?.permissions?.['transfers.edit']));
 const rows = computed(() => result.value?.data || []);
 const filterSelects = computed(() => [
-    { key: 'status', label: 'Կարգավիճակ', allLabel: 'Բոլոր փուլերը', options: [{ value: 'pending', label: 'Սպասում է հաստատման' }, { value: 'stock_shortage', label: 'Սպասում է պաշարի համալրման' }, { value: 'approved', label: 'Հաստատված' }, { value: 'shipped', label: 'Ուղարկված է' }, { value: 'completed', label: 'Ստացված է' }] },
+    { key: 'status', label: 'Կարգավիճակ', allLabel: 'Բոլոր փուլերը', options: statusOptions('transfers') },
     { key: 'from_branch', label: 'Ուղարկող պահեստ', allLabel: 'Բոլոր պահեստները', options: (result.value?.filter_options?.branches || []).map((branch) => ({ value: branch.id, label: branch.name })) },
     { key: 'to_branch', label: 'Ստացող պահեստ', allLabel: 'Բոլոր պահեստները', options: (result.value?.filter_options?.branches || []).map((branch) => ({ value: branch.id, label: branch.name })) },
 ]);
@@ -79,7 +82,6 @@ async function runAction() {
     catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գործողությունը չկատարվեց։'; }
     finally { saving.value = false; }
 }
-const statusLabel = (status) => ({ pending: 'Սպասում է հաստատման', stock_shortage: 'Սպասում է պաշարի համալրման', approved: 'Հաստատված է', shipped: 'Ուղարկված է', completed: 'Ստացված է', rejected: 'Մերժված է' }[status] || status);
 const itemName = (id) => options.value.products.find((p) => Number(p.id) === Number(id))?.name || 'Ապրանք';
 useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
 </script>
@@ -87,9 +89,10 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
 <template>
     <div class="page-heading"><div><p class="eyebrow">ՊԱՀԵՍՏԱՅԻՆ ԳՈՐԾԸՆԹԱՑ</p><h1>{{ route.meta.title }}</h1><p class="muted">Տեղափոխումը նախ հաստատվում է, հետո ուղարկվում աղբյուր պահեստից և վերջում ընդունվում ստացող մասնաճյուղում։</p></div><button v-if="canCreate" class="primary-button" @click="openCreate"><span><AppIcon name="add" /></span>Նոր տեղափոխում</button></div>
     <div v-if="error && !modal && !confirmAction" class="alert-error" role="alert">{{ error }}</div><div v-if="notice" class="alert-info" role="status">{{ notice }}</div>
+    <WorkflowStatusGuide workflow="transfers" />
     <section class="table-card"><div class="table-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model="search" class="form-control" placeholder="Որոնել համարով, պահեստով կամ կարգավիճակով…"></label><div class="list-count">Ընդամենը՝ <b>{{ result?.pagination.total ?? '…' }}</b></div><ExportActions page="transfers" :search="search" :filters="filters" :disabled="busy" /></div><ListFilterBar :model-value="filters" @change="filters[$event.key] = $event.value" :selects="filterSelects" :date-range="true" @apply="load(1)" @reset="resetFilters" />
         <div class="table-scroll"><table class="data-table transfer-table"><thead><tr><th>Փաստաթուղթ</th><th>Ումից</th><th>Ուր</th><th>Կարգավիճակ</th><th>Պատճառ</th><th>Ստեղծվել է</th><th>Գործողություն</th></tr></thead><tbody>
-            <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.transfer_no }}</strong></td><td>{{ row.from_branch }}</td><td>{{ row.to_branch }}</td><td><span class="workflow-status" :class="`state-${row.status}`">{{ statusLabel(row.status) }}</span></td><td>{{ row.reason || '—' }}</td><td>{{ formatDisplayDate(row.created_at) }}</td><td><button v-if="actionFor(row)" class="secondary-button compact-action" @click="confirm(row,actionFor(row)[0])">{{ actionFor(row)[1] }}</button><span v-else class="muted">—</span></td></tr>
+            <tr v-for="row in rows" :key="row.id"><td><strong>{{ row.transfer_no }}</strong></td><td>{{ row.from_branch }}</td><td>{{ row.to_branch }}</td><td><StatusBadge workflow="transfers" :status="row.status" /></td><td>{{ row.reason || '—' }}</td><td>{{ formatDisplayDate(row.created_at) }}</td><td><button v-if="actionFor(row)" class="secondary-button compact-action" @click="confirm(row,actionFor(row)[0])">{{ actionFor(row)[1] }}</button><span v-else class="muted">—</span></td></tr>
             <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">{{ search ? 'Որոնմանը համապատասխան տեղափոխում չկա։' : 'Տեղափոխումներ դեռ չկան։' }}</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
         </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
