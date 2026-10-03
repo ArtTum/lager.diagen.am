@@ -32,6 +32,9 @@ class CatalogService
         if ($location > 0 && $kind !== 'transfers' && isset($options['branches'])) {
             $options['branches'] = $options['branches']->where('id', $location)->values();
         }
+        if ($kind === 'requests' && isset($options['branches'])) {
+            $options['branches'] = $options['branches']->where('code', '<>', 'CENTRAL')->values();
+        }
         if ($kind === 'users') {
             $options['roles'] = $options['roles']
                 ->filter(fn (Role $role): bool => $this->permissions->canAssignRole($actor, $role))

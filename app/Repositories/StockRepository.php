@@ -59,7 +59,7 @@ class StockRepository
 
     public function branchIsActive(int $location): bool
     {
-        return Branch::query()->whereKey($location)->where('active', true)->exists();
+        return Branch::query()->whereKey($location)->where('active', true)->where('code', '<>', 'CENTRAL')->exists();
     }
 
     public function branchIdForLocation(int $location): int

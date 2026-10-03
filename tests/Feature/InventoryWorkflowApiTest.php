@@ -120,6 +120,25 @@ class InventoryWorkflowApiTest extends TestCase
         self::assertNull(Movement::query()->sole()->to_location);
     }
 
+    public function test_central_inventory_requires_the_canonical_zero_location(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        Product::query()->create([
+            'code' => 'CENTRAL-INVENTORY', 'name' => 'Canonical inventory item', 'unit' => 'հատ',
+            'purchase_price' => 10, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $actor = $this->user($central, 'counter', 10, ['inventory.create']);
+        $this->actingAs($actor, 'sanctum');
+
+        $this->postJson('/api/inventory', ['location_id' => $central->id])->assertUnprocessable();
+        self::assertSame(0, InventorySession::query()->count());
+        self::assertSame(0, InventoryLine::query()->count());
+
+        $this->postJson('/api/inventory', ['location_id' => 0])->assertCreated();
+        self::assertSame(0, (int) InventorySession::query()->sole()->location_id);
+        self::assertSame(1, InventoryLine::query()->count());
+    }
+
     public function test_inventory_cannot_increase_an_expired_lot(): void
     {
         [$sessionId, $line, $lot, $approver] = $this->prepareInventory(now()->subDay()->toDateString(), 5);

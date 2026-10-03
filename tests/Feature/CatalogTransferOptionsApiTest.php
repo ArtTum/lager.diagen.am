@@ -106,6 +106,27 @@ class CatalogTransferOptionsApiTest extends TestCase
         }
     }
 
+    public function test_central_request_options_exclude_central_without_removing_other_workflow_destinations(): void
+    {
+        $role = new Role(['name' => 'central_viewer']);
+        $role->setRelation('permissions', collect([
+            new Permission(['code' => 'requests.view']), new Permission(['code' => 'transfers.view']),
+            new Permission(['code' => 'stock.view']),
+        ]));
+        $actor = new User(['active' => true, 'branch_id' => $this->central->id]);
+        $actor->setAttribute('id', 11);
+        $actor->setRelation('branch', $this->central);
+        $actor->setRelation('role', $role);
+        $this->actingAs($actor, 'sanctum');
+
+        $requests = $this->getJson('/api/catalog/requests/options')->assertOk();
+        self::assertSame([$this->source->id, $this->destination->id], array_column($requests->json('data.branches'), 'id'));
+        foreach (['transfers', 'stock'] as $kind) {
+            $response = $this->getJson('/api/catalog/'.$kind.'/options')->assertOk();
+            self::assertSame([$this->central->id, $this->source->id, $this->destination->id], array_column($response->json('data.branches'), 'id'));
+        }
+    }
+
     public function test_destination_metadata_does_not_authorize_sending_from_another_branch(): void
     {
         $repository = $this->createMock(TransferRepository::class);

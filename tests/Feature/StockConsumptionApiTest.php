@@ -124,6 +124,27 @@ class StockConsumptionApiTest extends TestCase
         self::assertEquals(1.0, (float) Movement::query()->sole()->qty);
     }
 
+    public function test_central_stock_adjustment_requires_the_canonical_zero_location(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'CENTRAL-LOCATION', 'name' => 'Canonical central stock', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $actor = $this->branchUser($central, 10);
+        $actor->role->permissions->push(new Permission(['code' => 'stock.edit']));
+        $this->actingAs($actor, 'sanctum');
+        $data = ['product_id' => $product->id, 'lot_no' => 'CENTRAL-LOT', 'delta_qty' => 1, 'reason' => 'Physical stock correction'];
+
+        $this->postJson('/api/stock/adjust', [...$data, 'location_id' => $central->id])->assertUnprocessable();
+        self::assertSame(0, StockLot::query()->count());
+        self::assertSame(0, Movement::query()->count());
+
+        $this->postJson('/api/stock/adjust', [...$data, 'location_id' => 0])->assertOk();
+        self::assertSame(0, (int) StockLot::query()->sole()->location_id);
+        self::assertSame(0, (int) Movement::query()->sole()->to_location);
+    }
+
     private function lot(Product $product, int $location, string $lotNo, float $quantity, string $expiresOn): StockLot
     {
         return StockLot::query()->create([
@@ -199,6 +220,7 @@ class StockConsumptionApiTest extends TestCase
             $table->string('lot_no');
             $table->date('expires_on')->nullable();
             $table->date('received_on');
+            $table->string('bin_location')->nullable();
             $table->decimal('unit_cost', 14, 2)->default(0);
             $table->decimal('qty', 12, 3)->default(0);
         });

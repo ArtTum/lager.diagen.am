@@ -38,7 +38,7 @@ class StockRequestService
     public function suggestions(User $actor, int $requestedBranch): array
     {
         $branchId = $this->branchForActor($actor, $requestedBranch);
-        abort_unless($this->requests->branchIsActive($branchId), 422, 'Ընտրված մասնաճյուղը ակտիվ չէ։');
+        abort_unless($this->requests->branchIsActive($branchId), 422, 'Պահանջագրի ստացողը պետք է լինի ակտիվ մասնաճյուղ՝ կենտրոնական պահեստից բացի։');
 
         return ['branch' => $branchId, 'items' => $this->requests->suggestionsForBranch($branchId)];
     }
@@ -73,7 +73,7 @@ class StockRequestService
     public function create(User $actor, string $ip, array $data): array
     {
         $branchId = $this->branchForActor($actor, (int) $data['branch_id']);
-        abort_unless($this->requests->branchIsActive($branchId), 422, 'Ընտրված մասնաճյուղը ակտիվ չէ։');
+        abort_unless($this->requests->branchIsActive($branchId), 422, 'Պահանջագրի ստացողը պետք է լինի ակտիվ մասնաճյուղ՝ կենտրոնական պահեստից բացի։');
         $this->assertActiveProducts($data['items']);
         $status = $data['submit_mode'] === 'draft' ? 'draft' : 'sent';
 
@@ -198,6 +198,7 @@ class StockRequestService
 
     private function ship(object $row, User $actor): void
     {
+        abort_unless($this->requests->branchIsActive((int) $row->branch_id), 422, 'Պահանջագրի ստացողը պետք է լինի ակտիվ մասնաճյուղ՝ կենտրոնական պահեստից բացի։');
         foreach ($this->requests->items((int) $row->id, true) as $item) {
             $remaining = (float) $item->approved_qty;
             if ($remaining <= 0) {
@@ -223,6 +224,7 @@ class StockRequestService
 
     private function receive(object $row, User $actor): void
     {
+        abort_unless($this->requests->branchIsActive((int) $row->branch_id), 422, 'Պահանջագրի ստացողը պետք է լինի ակտիվ մասնաճյուղ՝ կենտրոնական պահեստից բացի։');
         $movements = $this->requests->movementsForReceipt((string) $row->request_no, (int) $row->branch_id);
         if ($movements->isEmpty()) {
             abort(409, 'Առաքման շարժերը չեն գտնվել։');

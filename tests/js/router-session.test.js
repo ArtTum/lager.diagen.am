@@ -138,14 +138,15 @@ test('a cross-tab token change clears cached user data and reloads for the new a
     assert.equal(context.reloads(), 1);
 });
 
-function mountShell(api) {
+function mountShell(api, { width = 1440 } = {}) {
     for (const key of ['window', 'document', 'history', 'HTMLElement', 'SVGElement', 'Element', 'Node', 'CustomEvent', 'localStorage']) {
         globalThis[key] = dom.window[key];
     }
-    window.matchMedia = () => ({ matches: false });
+    window.matchMedia = (query) => ({ matches: width <= Number(query.match(/max-width:\s*(\d+)px/)?.[1] || 0) });
     const Vue = require('vue');
     const stub = { render: () => null };
     const replacements = [];
+    const route = Vue.reactive({ path: '/stock', meta: {} });
     let user = account('Original session');
     const context = {
         currentUser: () => user,
@@ -159,7 +160,7 @@ function mountShell(api) {
         '@/services/api': api, '@/router': context, '@/router/access': access,
         '@/components/NotificationBell.vue': stub,
         '@/services/realtime': { startRealtime: () => () => {} },
-        'vue-router': { useRoute: () => Vue.reactive({ path: '/stock', meta: {} }), useRouter: () => ({ replace: async (path) => { replacements.push(path); } }), RouterView: stub },
+        'vue-router': { useRoute: () => route, useRouter: () => ({ replace: async (path) => { replacements.push(path); } }), RouterView: stub },
     }).default;
     const root = document.createElement('div');
     document.body.append(root);
@@ -167,8 +168,40 @@ function mountShell(api) {
     app.component('AppIcon', stub);
     app.component('RouterLink', stub);
     app.mount(root);
-    return { root, context, replacements, async settle() { await new Promise((resolve) => setImmediate(resolve)); await Vue.nextTick(); }, unmount() { app.unmount(); root.remove(); } };
+    return { root, context, replacements, route, resize(value) { width = value; window.dispatchEvent(new window.Event('resize')); }, async settle() { await new Promise((resolve) => setImmediate(resolve)); await Vue.nextTick(); }, unmount() { app.unmount(); root.remove(); } };
 }
+
+test('tablet navigation opens an accessible drawer, closes on navigation, and returns safely from desktop', async () => {
+    const view = mountShell({}, { width: 768 });
+    try {
+        await view.settle();
+        const toggle = view.root.querySelector('.mobile-menu-toggle');
+        const sidebar = view.root.querySelector('.sidebar');
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        toggle.click(); await view.settle();
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        assert.equal(sidebar.classList.contains('mobile-open'), true);
+        assert.ok(view.root.querySelector('.mobile-nav-backdrop'));
+        view.route.path = '/dashboard'; await view.settle();
+        assert.equal(sidebar.classList.contains('mobile-open'), false);
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(view.root.querySelector('.mobile-nav-backdrop'), null);
+        toggle.click(); await view.settle();
+        view.resize(1440); await view.settle();
+        assert.equal(sidebar.classList.contains('mobile-open'), false);
+        assert.equal(sidebar.classList.contains('sidebar-collapsed'), false);
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        assert.equal(view.root.querySelector('.mobile-nav-backdrop'), null);
+        toggle.click(); await view.settle();
+        assert.equal(sidebar.classList.contains('sidebar-collapsed'), true);
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        view.resize(768); await view.settle();
+        assert.equal(sidebar.classList.contains('mobile-open'), false);
+        assert.equal(sidebar.classList.contains('sidebar-collapsed'), false);
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(view.root.querySelector('.mobile-nav-backdrop'), null);
+    } finally { view.unmount(); }
+});
 
 test('a delayed logout revokes its original session and preserves a newer login', async () => {
     const pending = deferred();

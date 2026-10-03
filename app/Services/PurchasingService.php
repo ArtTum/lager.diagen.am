@@ -72,6 +72,9 @@ class PurchasingService
             foreach ($totals as $itemId => $quantity) {
                 $item = $this->purchasing->orderItemForUpdate((int) $itemId, (int) $order->id);
                 abort_unless($item, 422, 'Ընտրված տողը այս պատվերին չի պատկանում։');
+                if (! $item->product?->active) {
+                    throw ValidationException::withMessages(['items' => ['Պատվերի ապրանքն անջատված է․ մուտք գրանցելուց առաջ ակտիվացրեք այն։']]);
+                }
                 if ($quantity > (float) $item->ordered_qty - (float) $item->received_qty + 0.00001) {
                     throw ValidationException::withMessages(['items' => ['Մուտքի քանակը գերազանցում է պատվերի չստացված մնացորդը։']]);
                 }

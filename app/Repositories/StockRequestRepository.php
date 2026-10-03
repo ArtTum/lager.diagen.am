@@ -87,7 +87,7 @@ class StockRequestRepository
 
     public function branchIsActive(int $branchId): bool
     {
-        return Branch::query()->whereKey($branchId)->where('active', true)->exists();
+        return Branch::query()->whereKey($branchId)->where('active', true)->where('code', '<>', 'CENTRAL')->exists();
     }
 
     public function productIsActive(int $productId): bool

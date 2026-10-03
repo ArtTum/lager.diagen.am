@@ -16,11 +16,13 @@ const emit = defineEmits(['update:modelValue']);
 
 const root = ref(null);
 const input = ref(null);
+const popover = ref(null);
 const isOpen = ref(false);
 const typedValue = ref(displayIsoDate(props.modelValue));
 const month = ref(monthStart(parseIsoDate(props.modelValue) || new Date()));
 const popoverStyle = ref({ top: '0px', left: '0px' });
 const weekdayNames = ['Կիր', 'Երկ', 'Երք', 'Չրք', 'Հնգ', 'Ուրբ', 'Շբթ'];
+let activeViewport;
 const monthDays = computed(() => {
   const first = month.value;
   const offset = first.getDay();
@@ -77,12 +79,27 @@ function valueOfBoundary(iso) {
 }
 function updatePosition() {
   const trigger = root.value?.getBoundingClientRect();
-  if (!trigger) return;
-  const width = Math.min(360, window.innerWidth - 24);
-  const left = Math.max(12, Math.min(trigger.left, window.innerWidth - width - 12));
-  const below = window.innerHeight - trigger.bottom;
-  const top = below < 510 ? Math.max(8, trigger.top - 518) : trigger.bottom + 8;
-  popoverStyle.value = { top: `${top}px`, left: `${left}px`, width: `${width}px` };
+  if (!trigger || !popover.value) return;
+  const layoutWidth = document.documentElement.clientWidth || window.innerWidth;
+  const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
+  const viewport = window.visualViewport;
+  const leftEdge = Math.max(0, Math.min(viewport?.offsetLeft || 0, layoutWidth));
+  const topEdge = Math.max(0, Math.min(viewport?.offsetTop || 0, layoutHeight));
+  const rightEdge = Math.min(layoutWidth, leftEdge + (viewport?.width || layoutWidth));
+  const bottomEdge = Math.min(layoutHeight, topEdge + (viewport?.height || layoutHeight));
+  const width = Math.max(0, Math.min(360, rightEdge - leftEdge - 24));
+  const maxHeight = Math.max(0, bottomEdge - topEdge - 16);
+  // Measure after setting width: the calendar's square days shrink on narrow screens.
+  popover.value.style.width = `${width}px`;
+  const borderHeight = popover.value.offsetHeight - popover.value.clientHeight;
+  const naturalHeight = popover.value.scrollHeight + Math.max(0, borderHeight);
+  const height = Math.min(maxHeight, naturalHeight || maxHeight);
+  const below = bottomEdge - trigger.bottom - 8;
+  const above = trigger.top - topEdge - 8;
+  const preferredTop = below >= height || below >= above ? trigger.bottom + 8 : trigger.top - height - 8;
+  const top = Math.max(topEdge + 8, Math.min(preferredTop, bottomEdge - height - 8));
+  const left = Math.max(leftEdge + 12, Math.min(trigger.left, rightEdge - width - 12));
+  popoverStyle.value = { top: `${top}px`, left: `${left}px`, width: `${width}px`, maxHeight: `${maxHeight}px` };
 }
 function onOutside(event) {
   if (!root.value?.contains(event.target) && !event.target.closest?.('.date-picker-popover')) close();
@@ -96,12 +113,18 @@ function open() {
   document.addEventListener('pointerdown', onOutside, true);
   window.addEventListener('resize', updatePosition);
   window.addEventListener('scroll', updatePosition, true);
+  activeViewport = window.visualViewport;
+  activeViewport?.addEventListener('resize', updatePosition);
+  activeViewport?.addEventListener('scroll', updatePosition);
 }
 function close() {
   isOpen.value = false;
   document.removeEventListener('pointerdown', onOutside, true);
   window.removeEventListener('resize', updatePosition);
   window.removeEventListener('scroll', updatePosition, true);
+  activeViewport?.removeEventListener('resize', updatePosition);
+  activeViewport?.removeEventListener('scroll', updatePosition);
+  activeViewport = null;
 }
 function choose(date) {
   if (!isAllowed(date)) return;
@@ -141,7 +164,7 @@ onBeforeUnmount(close);
     <input ref="input" v-model="typedValue" class="date-picker-input" type="text" inputmode="numeric" autocomplete="off" maxlength="10" pattern="\d{2}\.\d{2}\.\d{4}" :placeholder="placeholder" :required="required" :disabled="disabled" :aria-label="ariaLabel" @input="onInput" @keydown="keydown">
   </div>
   <Teleport to="body">
-    <section v-if="isOpen" class="date-picker-popover" :style="popoverStyle" role="dialog" aria-label="Օրացույց">
+    <section v-if="isOpen" ref="popover" class="date-picker-popover" :style="popoverStyle" role="dialog" aria-label="Օրացույց">
       <header class="date-picker-head"><span class="date-picker-badge"><svg class="date-picker-calendar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="3"/><path d="M8 3v4M16 3v4M4 10h16M8 14h2M14 14h2M8 18h2"/></svg></span><div><small>ՕՐԱՑՈՒՅՑ</small><strong>{{ displayIsoDate(modelValue) || 'Ընտրեք ամսաթիվը' }}</strong></div><button class="date-picker-close" type="button" aria-label="Փակել օրացույցը" @click="close"><AppIcon name="xmark" /></button></header>
       <div class="date-picker-month"><button type="button" aria-label="Նախորդ ամիս" @click="shiftMonth(-1)"><AppIcon name="arrowLeft" /></button><strong>{{ monthTitle }}</strong><button type="button" aria-label="Հաջորդ ամիս" @click="shiftMonth(1)"><AppIcon name="arrowRight" /></button></div>
       <div class="date-picker-weekdays" role="row"><span v-for="day in weekdayNames" :key="day">{{ day }}</span></div>

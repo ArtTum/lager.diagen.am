@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
+import { userContextChanged } from '@/router/access';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 import ExportActions from '@/components/ExportActions.vue';
 import { formatDisplayDate } from '@/dateUtils';
@@ -27,6 +28,9 @@ const filters = reactive({ status: '', from_branch: '', to_branch: '', from: '',
 const form = reactive({ from_branch: '', to_branch: '', reason: '', items: [{ product_id: '', qty: '' }] });
 let debounce;
 let listRequestVersion = 0;
+let formRequestVersion = 0;
+let mutationSessionVersion = 0;
+const canView = computed(() => Boolean(user.value?.permissions?.['transfers.view']));
 const isCentral = computed(() => user.value?.location_id === 0);
 const canCreate = computed(() => Boolean(user.value?.permissions?.['transfers.create']));
 const canApprove = computed(() => Boolean(user.value?.permissions?.['transfers.approve']));
@@ -47,40 +51,70 @@ async function load(page = 1, pageSize = result.value?.pagination.per_page || 15
 }
 function resetFilters() { Object.assign(filters, { status: '', from_branch: '', to_branch: '', from: '', to: '' }); load(1); }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-const updateUser = (event) => { user.value = event.detail; };
+const updateUser = (event) => {
+    const changed = userContextChanged(user.value, event.detail); user.value = event.detail;
+    if (!changed) return;
+    closeDialogs(); mutationSessionVersion += 1; listRequestVersion += 1;
+    result.value = null; options.value = { branches: [], products: [] }; busy.value = false; saving.value = false; error.value = ''; notice.value = '';
+    if (canView.value) load(1);
+};
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; mutationSessionVersion += 1; closeDialogs(); clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
+
+function closeDialogs() { formRequestVersion += 1; modal.value = false; confirmAction.value = null; }
 
 async function openCreate() {
+    if (saving.value || !canView.value || !canCreate.value) return;
+    closeDialogs(); const version = formRequestVersion;
     error.value = '';
     try {
-        const response = await api.get('catalog/transfers/options'); options.value = response.data.data;
+        const response = await api.get('catalog/transfers/options');
+        if (version !== formRequestVersion || !canView.value || !canCreate.value) return;
+        options.value = response.data.data;
         form.from_branch = user.value?.branch?.id || '';
         form.to_branch = ''; form.reason = ''; form.items = [{ product_id: '', qty: '' }]; modal.value = true;
-    } catch (e) { error.value = e.response?.data?.message || 'Ձևի տվյալները չհաջողվեց բեռնել։'; }
+    } catch (e) { if (version === formRequestVersion) error.value = e.response?.data?.message || 'Ձևի տվյալները չհաջողվեց բեռնել։'; }
 }
 function addItem() { form.items.push({ product_id: '', qty: '' }); }
 function removeItem(index) { if (form.items.length > 1) form.items.splice(index, 1); }
 async function save() {
-    if (saving.value) return; saving.value = true; error.value = '';
-    try { await api.post('transfers', { ...form, from_branch: Number(form.from_branch), to_branch: Number(form.to_branch), items: form.items.map((line) => ({ product_id: Number(line.product_id), qty: Number(line.qty) })) }); modal.value = false; notice.value = 'Տեղափոխման հարցումն ուղարկվեց հաստատման։'; await load(1); setTimeout(() => notice.value = '', 3500); }
-    catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Տեղափոխման հարցումը չստեղծվեց։'; }
-    finally { saving.value = false; }
+    if (saving.value || !modal.value || !canView.value || !canCreate.value) return;
+    const session = mutationSessionVersion; saving.value = true; error.value = '';
+    try {
+        await api.post('transfers', { ...form, from_branch: Number(form.from_branch), to_branch: Number(form.to_branch), items: form.items.map((line) => ({ product_id: Number(line.product_id), qty: Number(line.qty) })) });
+        if (session !== mutationSessionVersion) return;
+        closeDialogs(); notice.value = 'Տեղափոխման հարցումն ուղարկվեց հաստատման։'; await load(1);
+        setTimeout(() => { if (session === mutationSessionVersion) notice.value = ''; }, 3500);
+    }
+    catch (e) { if (session === mutationSessionVersion) error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Տեղափոխման հարցումը չստեղծվեց։'; }
+    finally { if (session === mutationSessionVersion) saving.value = false; }
 }
 
 function actionFor(row) {
+    if (!canView.value) return null;
     if (['pending', 'stock_shortage'].includes(row.status) && canApprove.value) return ['approve', row.status === 'stock_shortage' ? 'Վերաստուգել պաշարը' : 'Հաստատել'];
     if (row.status === 'approved' && canEdit.value && (isCentral.value || Number(user.value?.branch?.id) === Number(row.from_branch_id))) return ['ship', 'Ուղարկել'];
     if (row.status === 'shipped' && canEdit.value && Number(user.value?.branch?.id) === Number(row.to_branch_id)) return ['receive', 'Ստանալ'];
     return null;
 }
-function confirm(row, action) { confirmAction.value = { row, action }; }
+function confirm(row, action) {
+    if (saving.value || actionFor(row)?.[0] !== action) return;
+    closeDialogs(); confirmAction.value = { row, action };
+}
 async function runAction() {
-    if (!confirmAction.value) return;
-    const { row, action } = confirmAction.value; error.value = ''; saving.value = true;
-    try { const response = await api.post(`transfers/${row.id}/${action}`); notice.value = response.data?.message || (action === 'approve' ? 'Տեղափոխումը հաստատվեց։' : action === 'ship' ? 'Տեղափոխումն ուղարկվեց։' : 'Ստացումը գրանցվեց։'); confirmAction.value = null; await load(result.value?.pagination.current_page || 1); setTimeout(() => notice.value = '', 7000); }
-    catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գործողությունը չկատարվեց։'; }
-    finally { saving.value = false; }
+    if (!confirmAction.value || saving.value || !canView.value) return;
+    const { action } = confirmAction.value;
+    const row = rows.value.find(candidate => Number(candidate.id) === Number(confirmAction.value.row.id));
+    if (!row || actionFor(row)?.[0] !== action) { error.value = 'Տեղափոխման փուլը փոխվել է։ Թարմացրեք ցանկը։'; return; }
+    const session = mutationSessionVersion; error.value = ''; saving.value = true;
+    try {
+        const response = await api.post(`transfers/${row.id}/${action}`);
+        if (session !== mutationSessionVersion) return;
+        notice.value = response.data?.message || (action === 'approve' ? 'Տեղափոխումը հաստատվեց։' : action === 'ship' ? 'Տեղափոխումն ուղարկվեց։' : 'Ստացումը գրանցվեց։'); closeDialogs(); await load(result.value?.pagination.current_page || 1);
+        setTimeout(() => { if (session === mutationSessionVersion) notice.value = ''; }, 7000);
+    }
+    catch (e) { if (session === mutationSessionVersion) error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գործողությունը չկատարվեց։'; }
+    finally { if (session === mutationSessionVersion) saving.value = false; }
 }
 const itemName = (id) => options.value.products.find((p) => Number(p.id) === Number(id))?.name || 'Ապրանք';
 useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
@@ -96,10 +130,10 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
             <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">{{ search ? 'Որոնմանը համապատասխան տեղափոխում չկա։' : 'Տեղափոխումներ դեռ չկան։' }}</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
         </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
-    <div v-if="modal" class="modal-backdrop" @click.self="modal=false"><form class="modal-card transfer-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԵՍՏԻ ՄԻՋԵՎ ՏԵՂԱՓՈԽՈՒՄ</p><h2>Նոր տեղափոխման հարցում</h2><p>Հաստատումից հետո պաշարը կհանվի միայն ուղարկման պահին։</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" @click="modal=false"><AppIcon name="xmark" /></button></div>
+    <div v-if="modal" class="modal-backdrop" @click.self="closeDialogs"><form class="modal-card transfer-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԵՍՏԻ ՄԻՋԵՎ ՏԵՂԱՓՈԽՈՒՄ</p><h2>Նոր տեղափոխման հարցում</h2><p>Հաստատումից հետո պաշարը կհանվի միայն ուղարկման պահին։</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" @click="closeDialogs"><AppIcon name="xmark" /></button></div>
         <div class="form-grid"><label class="form-field">Ուղարկող պահեստ *<select v-searchable-select v-model="form.from_branch" class="form-control" :disabled="!isCentral && !!user?.branch?.id" required><option value="">Ընտրել</option><option v-for="b in options.branches" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field">Ստացող պահեստ *<select v-searchable-select v-model="form.to_branch" class="form-control" required><option value="">Ընտրել նպատակակետը</option><option v-for="b in options.branches.filter((item)=>Number(item.id)!==Number(form.from_branch))" :key="b.id" :value="b.id">{{ b.name }}</option></select></label><label class="form-field span-2">Պատճառ *<textarea v-model.trim="form.reason" class="form-control" minlength="3" maxlength="2000" required placeholder="Նշեք տեղափոխման պատճառը"></textarea></label></div>
         <div class="transfer-lines"><div class="section-label">Ապրանքներ</div><div v-for="(line,index) in form.items" :key="index" class="transfer-line-row"><label class="form-field">Ապրանք<select v-searchable-select v-model="line.product_id" class="form-control" required><option value="">Ընտրել ապրանքը</option><option v-for="p in options.products" :key="p.id" :value="p.id">{{ p.code }} · {{ p.name }}</option></select></label><label class="form-field">Քանակ<input v-model="line.qty" class="form-control" type="number" min="0.001" step="0.001" required></label><button v-if="form.items.length>1" class="icon-button danger remove-line" type="button" title="Հեռացնել տողը" @click="removeItem(index)"><AppIcon name="xmark" /></button></div><button class="secondary-button add-line" type="button" @click="addItem"><AppIcon name="add" /> Ավելացնել ապրանք</button></div>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button class="secondary-button" type="button" @click="modal=false">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Ուղարկել հաստատման' }}</button></div>
+        <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button class="secondary-button" type="button" @click="closeDialogs">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Ուղարկել հաստատման' }}</button></div>
     </form></div>
-    <div v-if="confirmAction" class="modal-backdrop" @click.self="confirmAction=null"><section class="modal-card confirm-card"><div class="metric-icon" :class="confirmAction.action==='approve'?'blue':'violet'"><AppIcon :name="confirmAction.action==='approve'?'clipboard':'transfers'" /></div><h2>{{ confirmAction.action==='approve'?(confirmAction.row.status==='stock_shortage'?'Վերաստուգե՞լ պաշարը':'Հաստատե՞լ տեղափոխումը'):confirmAction.action==='ship'?'Ուղարկե՞լ տեղափոխումը':'Գրանցե՞լ ստացումը' }}</h2><p>Փաստաթուղթ՝ <b>{{ confirmAction.row.transfer_no }}</b></p><p class="muted">{{ confirmAction.action==='approve'?(confirmAction.row.status==='stock_shortage'?'Կստուգվի ազատ պաշարը։ Եթե այն բավարար է, տեղափոխումը կհաստատվի, հակառակ դեպքում կմնա համալրման սպասման փուլում։':'Հաստատումից առաջ կստուգվի ազատ պաշարը։ Եթե այն բավարար չէ, հարցումը կտեղափոխվի պաշարի համալրման սպասման փուլ։'):confirmAction.action==='ship'?'Ուղարկելիս պաշարը կհանվի աղբյուր պահեստից FEFO հերթով։':'Ստացման հաստատումից հետո պաշարը կավելանա ձեր պահեստում։' }}</p><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button class="secondary-button" :disabled="saving" @click="confirmAction=null">Չեղարկել</button><button class="primary-button" :disabled="saving" @click="runAction">{{ saving ? 'Կատարվում է…' : confirmAction.action==='approve'&&confirmAction.row.status==='stock_shortage'?'Վերաստուգել':'Հաստատել' }}</button></div></section></div>
+    <div v-if="confirmAction" class="modal-backdrop" @click.self="closeDialogs"><section class="modal-card confirm-card"><div class="metric-icon" :class="confirmAction.action==='approve'?'blue':'violet'"><AppIcon :name="confirmAction.action==='approve'?'clipboard':'transfers'" /></div><h2>{{ confirmAction.action==='approve'?(confirmAction.row.status==='stock_shortage'?'Վերաստուգե՞լ պաշարը':'Հաստատե՞լ տեղափոխումը'):confirmAction.action==='ship'?'Ուղարկե՞լ տեղափոխումը':'Գրանցե՞լ ստացումը' }}</h2><p>Փաստաթուղթ՝ <b>{{ confirmAction.row.transfer_no }}</b></p><p class="muted">{{ confirmAction.action==='approve'?(confirmAction.row.status==='stock_shortage'?'Կստուգվի ազատ պաշարը։ Եթե այն բավարար է, տեղափոխումը կհաստատվի, հակառակ դեպքում կմնա համալրման սպասման փուլում։':'Հաստատումից առաջ կստուգվի ազատ պաշարը։ Եթե այն բավարար չէ, հարցումը կտեղափոխվի պաշարի համալրման սպասման փուլ։'):confirmAction.action==='ship'?'Ուղարկելիս պաշարը կհանվի աղբյուր պահեստից FEFO հերթով։':'Ստացման հաստատումից հետո պաշարը կավելանա ձեր պահեստում։' }}</p><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button class="secondary-button" :disabled="saving" @click="closeDialogs">Չեղարկել</button><button class="primary-button" :disabled="saving" @click="runAction">{{ saving ? 'Կատարվում է…' : confirmAction.action==='approve'&&confirmAction.row.status==='stock_shortage'?'Վերաստուգել':'Հաստատել' }}</button></div></section></div>
 </template>

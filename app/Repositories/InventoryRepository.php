@@ -54,7 +54,7 @@ class InventoryRepository
     {
         return $location === 0
             ? Branch::query()->where('code', 'CENTRAL')->where('active', true)->exists()
-            : Branch::query()->whereKey($location)->where('active', true)->exists();
+            : Branch::query()->whereKey($location)->where('active', true)->where('code', '<>', 'CENTRAL')->exists();
     }
 
     public function activeLocations(int $actorLocation): Collection

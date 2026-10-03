@@ -134,6 +134,71 @@ class StockRequestWorkflowApiTest extends TestCase
         self::assertSame(8, AuditLog::query()->count());
     }
 
+    public function test_central_warehouse_cannot_be_the_destination_of_a_branch_request(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'SELF-REQUEST', 'name' => 'Central request item', 'unit' => 'հատ', 'purchase_price' => 100,
+            'lot_control' => false, 'expiry_control' => false, 'active' => true,
+        ]);
+        $actor = $this->user($central, 'request_creator', 20, ['requests.create']);
+        $this->actingAs($actor, 'sanctum');
+
+        $this->postJson('/api/requests', [
+            'branch_id' => $central->id, 'urgency' => 'normal', 'submit_mode' => 'send',
+            'items' => [['product_id' => $product->id, 'qty' => 1]],
+        ])->assertUnprocessable();
+        $this->getJson('/api/requests/suggestions?branch_id='.$central->id)->assertUnprocessable();
+
+        self::assertSame(0, StockRequest::query()->count());
+        self::assertSame(0, StockRequestItem::query()->count());
+        self::assertSame(0, AuditLog::query()->count());
+    }
+
+    #[DataProvider('legacyCentralRequestTransitions')]
+    public function test_legacy_central_request_cannot_ship_or_receive_stock(string $status, string $action): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'LEGACY-CENTRAL', 'name' => 'Legacy request item', 'unit' => 'հատ', 'purchase_price' => 100,
+            'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $lot = StockLot::query()->create([
+            'product_id' => $product->id, 'location_id' => 0, 'lot_no' => 'LEGACY-LOT',
+            'received_on' => now()->toDateString(), 'unit_cost' => 100, 'qty' => 5,
+        ]);
+        $request = StockRequest::query()->create([
+            'request_no' => 'LEGACY-CENTRAL-REQUEST', 'branch_id' => $central->id, 'requested_by' => 20,
+            'status' => $status, 'urgency' => 'normal', 'created_at' => now(),
+        ]);
+        StockRequestItem::query()->create([
+            'request_id' => $request->id, 'product_id' => $product->id, 'requested_qty' => 2, 'approved_qty' => 2,
+        ]);
+        if ($action === 'receive') {
+            Movement::query()->create([
+                'movement_no' => 'LEGACY-SENT', 'type' => 'branch_out', 'product_id' => $product->id, 'lot_id' => $lot->id,
+                'from_location' => 0, 'to_location' => $central->id, 'qty' => 2, 'unit_cost' => 100,
+                'reference' => $request->request_no, 'reason' => 'Legacy dispatch', 'actor_id' => 20,
+                'happened_at' => now(), 'created_at' => now(),
+            ]);
+        }
+        $movementCount = Movement::query()->count();
+        $actor = $this->user($central, 'admin', 20, ['requests.edit']);
+
+        $this->actingAs($actor, 'sanctum')->postJson('/api/requests/'.$request->id.'/'.$action)->assertUnprocessable();
+
+        self::assertSame($status, $request->fresh()->status);
+        self::assertSame(1, StockLot::query()->count());
+        self::assertEquals(5.0, (float) $lot->fresh()->qty);
+        self::assertSame($movementCount, Movement::query()->count());
+        self::assertSame(0, AuditLog::query()->count());
+    }
+
+    public static function legacyCentralRequestTransitions(): array
+    {
+        return [['ready_to_ship', 'ship'], ['shipped', 'receive']];
+    }
+
     public function test_branch_request_suggestions_use_only_active_branch_stock_and_recent_internal_use(): void
     {
         $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);

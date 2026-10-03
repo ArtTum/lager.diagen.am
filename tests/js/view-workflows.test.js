@@ -235,12 +235,214 @@ test('supplier viewers see history but no create, edit or deactivate controls', 
     } finally { view.unmount(); }
 });
 
+test('a pending supplier edit cannot replace a newer supplier creation draft or change its write endpoint', async () => {
+    const pending = deferred(); const writes = [];
+    const supplier = { id: 1, name: 'Existing supplier', active: true };
+    const view = await mountView('views/suppliers/Index.vue', '/suppliers', {
+        async get(endpoint) { return endpoint === 'suppliers' ? { data: { data: [supplier], total: 1 } } : pending.promise; },
+        async post(endpoint, body) { writes.push({ endpoint, body }); return {}; },
+        async put() { assert.fail('the new creation draft must never edit an existing supplier'); },
+    }, { id: 7, permissions: { 'suppliers.view': true, 'suppliers.create': true, 'suppliers.edit': true } });
+    try {
+        await settle(); view.root.querySelector('[title="Խմբագրել"]').click(); await settle();
+        view.root.querySelector('.page-heading .primary-button').click(); await settle();
+        change(view.root.querySelector('.supplier-modal input'), 'New supplier'); await settle();
+        pending.resolve({ data: { data: supplier } }); await settle();
+        assert.equal(view.root.querySelector('.supplier-modal input').value, 'New supplier');
+        submit(view.root.querySelector('.supplier-modal')); await settle();
+        assert.equal(writes[0].endpoint, 'suppliers');
+        assert.equal(writes[0].body.name, 'New supplier');
+    } finally { view.unmount(); }
+});
+
+for (const module of ['transfers', 'returns']) {
+    test(`a late ${module} options response cannot erase a newer creation draft`, async () => {
+        const first = deferred(); const second = deferred(); let optionLoads = 0;
+        const view = await mountView(`views/${module}/Index.vue`, `/${module}`, {
+            async get(endpoint) {
+                if (endpoint === `pages/${module}` || endpoint === 'returns') return list([]);
+                optionLoads += 1; return optionLoads === 1 ? first.promise : second.promise;
+            },
+            async post() { assert.fail('opening a draft must not write'); },
+        }, { id: 7, branch: { id: 2 }, location_id: 2, permissions: { [`${module}.view`]: true, [`${module}.create`]: true } });
+        try {
+            await settle();
+            view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            const options = { data: { data: { branches: [{ id: 2, name: 'Erebuni' }, { id: 3, name: 'Arabkir' }], products: [], suppliers: [] } } };
+            second.resolve(options); await settle();
+            const currentForm = view.root.querySelector('form.modal-card');
+            change(currentForm.querySelector('textarea'), 'Keep this newer reason'); await settle();
+            first.resolve(options); await settle();
+            assert.equal(view.root.querySelector('form.modal-card textarea').value, 'Keep this newer reason');
+            currentForm.querySelector('.close-button').click(); await settle();
+            assert.equal(view.root.querySelector('form.modal-card'), null);
+        } finally { view.unmount(); }
+    });
+}
+
+test('supplier, transfer and return openers cannot restore old forms after an account change or permission loss', async () => {
+    for (const module of ['suppliers', 'transfers', 'returns']) {
+        for (const revoked of [false, true]) {
+            const pending = deferred(); const supplier = { id: 1, name: 'Private supplier', active: true };
+            const user = { id: 7, location_id: 2, branch: { id: 2 }, permissions: { [`${module}.view`]: true, [`${module}.create`]: true, [`${module}.edit`]: true } };
+            const view = await mountView(`views/${module}/Index.vue`, `/${module}`, {
+                async get(endpoint) {
+                    if (endpoint === 'suppliers') return { data: { data: [supplier], total: 1 } };
+                    if (endpoint === 'returns' || endpoint.startsWith('pages/')) return list([]);
+                    return pending.promise;
+                },
+                async post() { assert.fail('an old opener must not write'); },
+            }, user);
+            try {
+                await settle();
+                view.root.querySelector(module === 'suppliers' ? '[title="Խմբագրել"]' : '.page-heading .primary-button').click(); await settle();
+                window.dispatchEvent(new CustomEvent('lager:user', { detail: revoked ? { ...user, permissions: {} } : { ...user, id: 8, location_id: 3, branch: { id: 3 } } })); await settle();
+                pending.resolve(module === 'suppliers' ? { data: { data: supplier } } : { data: { data: { branches: [{ id: 2, name: 'Erebuni' }], products: [], suppliers: [] } } }); await settle();
+                assert.equal(view.root.querySelector('.modal-backdrop'), null, `${module}: ${revoked ? 'revoked' : 'changed account'}`);
+            } finally { view.unmount(); }
+        }
+    }
+});
+
+test('supplier, transfer and return save completions cannot close the next account draft or reopen while saving', async () => {
+    for (const module of ['suppliers', 'transfers', 'returns']) {
+        const pending = deferred(); const writes = [];
+        const user = { id: 7, location_id: 2, branch: { id: 2 }, permissions: { [`${module}.view`]: true, [`${module}.create`]: true } };
+        const view = await mountView(`views/${module}/Index.vue`, `/${module}`, {
+            async get(endpoint) {
+                if (endpoint === 'suppliers') return { data: { data: [], total: 0 } };
+                if (endpoint === 'returns' || endpoint.startsWith('pages/')) return list([]);
+                return { data: { data: { branches: [{ id: 2, name: 'Erebuni' }, { id: 3, name: 'Arabkir' }], products: [], suppliers: [] } } };
+            },
+            post(endpoint, body) { writes.push({ endpoint, body }); return pending.promise; },
+        }, user);
+        try {
+            await settle(); view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            submit(view.root.querySelector('form.modal-card')); await settle();
+            assert.equal(writes.length, 1, module);
+            view.root.querySelector('form.modal-card .close-button').click(); await settle();
+            view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            assert.equal(view.root.querySelector('form.modal-card'), null, `${module} cannot start another draft while its save is pending`);
+            window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8 } })); await settle();
+            view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            const current = view.root.querySelector('form.modal-card');
+            assert.ok(current, module);
+            const field = current.querySelector(module === 'suppliers' ? 'input' : 'textarea');
+            change(field, 'New account draft'); await settle();
+            pending.resolve({}); await settle();
+            assert.equal(view.root.querySelector('form.modal-card'), current, module);
+            assert.equal(field.value, 'New account draft', module);
+            assert.equal(current.querySelector('.primary-button').disabled, false, module);
+            assert.equal(view.root.querySelector('.notice-success,.alert-info'), null, module);
+            assert.equal(writes.length, 1, module);
+        } finally { view.unmount(); }
+    }
+});
+
+test('transfer confirmations stop on a permission change and revalidate the latest visible workflow state', async () => {
+    const writes = [];
+    let row = { id: 1, transfer_no: 'TRANSFER-1', status: 'approved', from_branch_id: 2, to_branch_id: 3 };
+    const user = { id: 7, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true, 'transfers.edit': true } };
+    const view = await mountView('views/transfers/Index.vue', '/transfers', {
+        async get() { return list([row]); },
+        async post(...args) { writes.push(args); return { data: {} }; },
+    }, user);
+    try {
+        await settle(); view.root.querySelector('tbody button').click(); await settle();
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: { 'transfers.view': true } } })); await settle();
+        assert.equal(view.root.querySelector('.confirm-card'), null);
+        assert.equal(view.root.querySelector('tbody button'), null);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: user })); await settle();
+        view.root.querySelector('tbody button').click(); await settle();
+        row = { ...row, status: 'shipped' };
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle(); await settle();
+        view.root.querySelector('.confirm-card .primary-button').click(); await settle();
+        assert.deepEqual(writes, [], 'the old source shipping confirmation must not post after the transfer is already shipped');
+    } finally { view.unmount(); }
+});
+
+test('purchase and receipt saves from a previous account cannot close or overwrite the next account draft', async () => {
+    for (const module of ['purchases', 'receipts']) {
+        const pending = deferred(); const writes = [];
+        const user = { id: 7, location_id: 0, permissions: { [`${module}.view`]: true, [`${module}.create`]: true } };
+        const view = await mountView('views/purchasing/Index.vue', `/${module}`, {
+            async get(endpoint) { return endpoint.startsWith('pages/') ? list([], {}) : { data: { data: { suppliers: [], products: [], orders: [] } } }; },
+            post(endpoint, body) { writes.push({ endpoint, body }); return pending.promise; },
+        }, user);
+        try {
+            await settle(); view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            submit(view.root.querySelector('.purchase-modal')); await settle();
+            assert.equal(writes[0].endpoint, module);
+            window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8 } })); await settle();
+            assert.equal(view.root.querySelector('.purchase-modal'), null);
+            view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            const current = view.root.querySelector('.purchase-modal');
+            assert.ok(current, module);
+            const field = current.querySelector('.form-grid input');
+            change(field, 'New account draft'); await settle();
+            pending.resolve({}); await settle();
+            assert.equal(view.root.querySelector('.purchase-modal'), current, module);
+            assert.equal(field.value, 'New account draft');
+            assert.equal(current.querySelector('.primary-button').disabled, false);
+            assert.equal(view.root.querySelector('.notice-success'), null);
+            assert.equal(writes.length, 1);
+        } finally { view.unmount(); }
+    }
+});
+
+test('purchase approvals revalidate current permission and pending status before posting', async () => {
+    const writes = [];
+    let row = { id: 1, order_no: 'ORDER-1', status: 'pending' };
+    const user = { id: 7, location_id: 0, permissions: { 'purchases.view': true, 'purchases.approve': true } };
+    const view = await mountView('views/purchasing/Index.vue', '/purchases', {
+        async get() { return list([row], { order_no: 'Order' }); },
+        async post(...args) { writes.push(args); return {}; },
+    }, user);
+    try {
+        await settle(); view.root.querySelector('tbody button').click(); await settle();
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: { 'purchases.view': true } } })); await settle();
+        assert.equal(view.root.querySelector('.confirm-card'), null);
+        assert.equal(view.root.querySelector('tbody button'), null);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: user })); await settle();
+        view.root.querySelector('tbody button').click(); await settle();
+        row = { ...row, status: 'approved' };
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle(); await settle();
+        view.root.querySelector('.confirm-card .primary-button').click(); await settle();
+        assert.deepEqual(writes, []);
+        assert.match(view.root.querySelector('.confirm-card .form-error').textContent, /այլևս հաստատման չի սպասում/);
+    } finally { view.unmount(); }
+});
+
+test('a delayed purchase approval cannot close the next account confirmation or announce its old decision', async () => {
+    const pending = deferred(); const writes = [];
+    const user = { id: 7, location_id: 0, permissions: { 'purchases.view': true, 'purchases.approve': true } };
+    const view = await mountView('views/purchasing/Index.vue', '/purchases', {
+        async get() { return list([1, 2].map(id => ({ id, order_no: `ORDER-${id}`, status: 'pending' })), { order_no: 'Order' }); },
+        post(endpoint) { writes.push(endpoint); return pending.promise; },
+    }, user);
+    try {
+        await settle(); view.root.querySelectorAll('tbody button')[0].click(); await settle();
+        view.root.querySelector('.confirm-card .primary-button').click(); await settle();
+        assert.deepEqual(writes, ['purchases/1/approve']);
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8 } })); await settle();
+        view.root.querySelectorAll('tbody button')[1].click(); await settle();
+        const current = view.root.querySelector('.confirm-card');
+        assert.match(current.textContent, /ORDER-2/);
+        pending.resolve({}); await settle();
+        assert.equal(view.root.querySelector('.confirm-card'), current);
+        assert.equal(current.querySelector('.primary-button').disabled, false);
+        assert.equal(view.root.querySelector('.notice-success'), null);
+        assert.deepEqual(writes, ['purchases/1/approve']);
+    } finally { view.unmount(); }
+});
+
 test('an administrator can take sent requests for review while cancellation remains available', async () => {
     const calls = []; let status = 'sent';
     const view = await mountView('views/requests/Index.vue', '/requests', {
         async get(endpoint) {
             if (endpoint === 'pages/requests') return list([{ id: 1, request_no: 'REQ-1', status, branch_id: 3, requested_by: 10 }]);
-            return { data: { data: { id: 1, request_no: 'REQ-1', items: [] } } };
+            return { data: { data: { id: 1, request_no: 'REQ-1', status, items: [] } } };
         },
         async post(endpoint, payload) { calls.push({ endpoint, payload }); status = 'review'; return {}; },
     }, { id: 9, role: { name: 'admin' }, branch: { id: 2 }, location_id: 0, permissions: { 'requests.view': true, 'requests.edit': true, 'requests.approve': true } });
@@ -338,7 +540,7 @@ for (const [filename, path, endpoint] of listViews) {
                     calls += 1;
                     return calls === 1 ? initial.promise : latest.promise;
                 },
-            }, { permissions: {} });
+            }, { permissions: { [`${path.split('/')[1]}.view`]: true } });
             await settle();
             change(view.root.querySelector('.search-input input, .expiry-search input, input[placeholder*="Փաստաթուղթ"]'), 'latest filter');
             await Vue.nextTick();
@@ -384,7 +586,7 @@ for (const [filename, path, endpoint] of listViews) {
                     if (path === '/suppliers') Object.assign(response.data, response.data.pagination);
                     return response;
                 },
-            }, {}, { '@/components/Pagination.vue': livePagination, '@/components/ListFilterBar.vue': liveFilters });
+            }, { permissions: { [`${path.split('/')[1]}.view`]: true } }, { '@/components/Pagination.vue': livePagination, '@/components/ListFilterBar.vue': liveFilters });
             await settle();
             change(view.root.querySelector('.search-input input, .expiry-search input, input[placeholder*="Փաստաթուղթ"]'), 'keep this search');
             await Vue.nextTick();
@@ -419,7 +621,7 @@ test('changes arriving during a list load fetch one trailing current snapshot wi
             const response = list([{ id: 1, name: `Snapshot ${calls.length}`, active: true }]);
             return calls.length === 2 ? waiting.promise : Promise.resolve(response);
         },
-    }, { permissions: { 'branches.create': true } });
+    }, { permissions: { 'branches.view': true, 'branches.create': true } });
     try {
         await settle();
         view.root.querySelector('.page-heading .primary-button').click(); await settle();
@@ -476,9 +678,9 @@ test('dashboard metrics refresh on a realtime invalidation and stop after unmoun
 
 test('transfer receiving is offered only to an editor assigned to the actual destination branch', async () => {
     const profiles = [
-        { label: 'central administrator', user: { role: { name: 'admin' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.edit': true } }, expected: false },
-        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.edit': true } }, expected: false },
-        { label: 'destination branch editor', user: { role: { name: 'branch' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.edit': true } }, expected: true },
+        { label: 'central administrator', user: { role: { name: 'admin' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: false },
+        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: false },
+        { label: 'destination branch editor', user: { role: { name: 'branch' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: true },
         { label: 'destination branch viewer', user: { role: { name: 'viewer' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.view': true } }, expected: false },
     ];
     for (const { label, user, expected } of profiles) {
@@ -496,9 +698,9 @@ test('transfer receiving is offered only to an editor assigned to the actual des
 
 test('transfer shipping follows the actual source or central location even for an administrator role', async () => {
     const profiles = [
-        { label: 'central storekeeper', user: { role: { name: 'storekeeper' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.edit': true } }, expected: true },
-        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.edit': true } }, expected: true },
-        { label: 'destination branch administrator', user: { role: { name: 'admin' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.edit': true, 'transfers.create': true } }, expected: false },
+        { label: 'central storekeeper', user: { role: { name: 'storekeeper' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: true },
+        { label: 'source branch editor', user: { role: { name: 'branch' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: true },
+        { label: 'destination branch administrator', user: { role: { name: 'admin' }, location_id: 3, branch: { id: 3 }, permissions: { 'transfers.view': true, 'transfers.edit': true, 'transfers.create': true } }, expected: false },
         { label: 'source branch viewer', user: { role: { name: 'viewer' }, location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true } }, expected: false },
     ];
     for (const { label, user, expected } of profiles) {
@@ -708,6 +910,192 @@ test('an inventory detail response after closure or an access change cannot rest
             await settle(); pending.resolve({ data: { data: { session: snapshot } } }); await settle();
             assert.equal(view.root.querySelector('.inventory-inspection-modal'), null, endInspection);
             assert.equal(view.root.querySelector('.confirm-card'), null, endInspection);
+        } finally { view.unmount(); }
+    }
+});
+
+test('overlapping request draft edits keep the latest chosen draft and its quantities through submission', async () => {
+    const first = deferred(); const second = deferred(); const writes = [];
+    const records = [1, 2].map((id) => ({ id, request_no: `DRAFT-${id}`, status: 'draft', branch_id: 2, requested_by: 7 }));
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint) {
+            if (endpoint === 'pages/requests') return list(records);
+            if (endpoint === 'catalog/requests/options') return { data: { data: { branches: [{ id: 2, name: 'Erebuni' }], products: [1, 2].map((id) => ({ id, code: `P-${id}`, name: `Product ${id}` })) } } };
+            if (endpoint === 'requests/suggestions') return { data: { data: { items: {} } } };
+            return endpoint === 'requests/1' ? first.promise : second.promise;
+        },
+        async put(endpoint, body) { writes.push({ endpoint, body }); return {}; },
+        async post() { assert.fail('an edited draft must use its draft endpoint'); },
+    }, { id: 7, branch: { id: 2 }, location_id: 2, permissions: { 'requests.view': true, 'requests.edit': true } });
+    try {
+        await settle();
+        for (const row of view.root.querySelectorAll('tbody tr')) { row.querySelector('button').click(); await settle(); }
+        const snapshot = (id) => ({ data: { data: { id, status: 'draft', branch_id: 2, urgency: 'normal', reason: '', items: [{ id: id * 10, product_id: id, requested_qty: String(id), note: '' }] } } });
+        second.resolve(snapshot(2)); await settle(); first.resolve(snapshot(1)); await settle();
+        assert.equal(view.root.querySelector('.request-modal .request-line-row select').value, '2');
+        assert.equal(view.root.querySelector('.request-modal .request-line-row input[type="number"]').value, '2');
+        submit(view.root.querySelector('.request-modal')); await settle();
+        assert.equal(writes[0].endpoint, 'requests/2/draft');
+        assert.equal(writes[0].body.items[0].product_id, 2);
+        assert.equal(writes[0].body.items[0].qty, 2);
+    } finally { view.unmount(); }
+});
+
+test('overlapping inventory count forms keep the latest session and its own line IDs through submission', async () => {
+    const first = deferred(); const second = deferred(); const writes = [];
+    const records = [1, 2].map((id) => ({ ...inventorySnapshot(id), status: 'open', lines_count: 1, counted_lines_count: 0 }));
+    const view = await mountView('views/inventory/Index.vue', '/inventory', {
+        async get(endpoint) { return endpoint === 'inventory' ? list(records) : endpoint === 'inventory/1' ? first.promise : second.promise; },
+        async put(endpoint, body) { writes.push({ endpoint, body }); return {}; },
+        async post() { assert.fail('counting must not use an approval endpoint'); },
+    }, { id: 7, location_id: 2, permissions: { 'inventory.view': true, 'inventory.edit': true } });
+    try {
+        await settle();
+        for (const row of view.root.querySelectorAll('tbody tr')) { [...row.querySelectorAll('button')].find((button) => button.textContent === 'Լրացնել քանակները').click(); await settle(); }
+        second.resolve({ data: { data: { session: inventorySnapshot(2, { status: 'open' }), suppliers: [] } } }); await settle();
+        first.resolve({ data: { data: { session: inventorySnapshot(1, { status: 'open' }), suppliers: [] } } }); await settle();
+        assert.match(view.root.querySelector('form.inventory-modal .eyebrow').textContent, /INVENTORY-2/);
+        submit(view.root.querySelector('form.inventory-modal')); await settle();
+        assert.equal(writes[0].endpoint, 'inventory/2/count');
+        assert.deepEqual(Object.keys(writes[0].body.counts), ['20']);
+    } finally { view.unmount(); }
+});
+
+test('a late stock adjustment opener cannot replace a newer consumption form and its selected product', async () => {
+    const first = deferred(); const second = deferred(); let optionLoads = 0;
+    const products = [1, 2].map((id) => ({ id, code: `P-${id}`, name: `Product ${id}`, quantity: 5, min_qty: 0, unit: 'հատ' }));
+    const view = await mountView('views/stock/Index.vue', '/stock', {
+        async get(endpoint) {
+            if (endpoint === 'pages/stock') return list(products);
+            if (endpoint === 'stock/lots') return { data: { data: [] } };
+            optionLoads += 1; return optionLoads === 1 ? first.promise : second.promise;
+        },
+        async post() { assert.fail('opening forms must not write'); },
+    }, { id: 7, location_id: 2, permissions: { 'stock.view': true, 'stock.create': true, 'stock.edit': true } });
+    try {
+        await settle();
+        view.root.querySelectorAll('tbody tr')[0].querySelector('[title="Ճշգրտել"]').click(); await settle();
+        view.root.querySelectorAll('tbody tr')[1].querySelector('[title="Գրանցել ելք"]').click(); await settle();
+        const options = { data: { data: { products, branches: [{ id: 2, name: 'Erebuni', code: 'EREB' }] } } };
+        second.resolve(options); await settle(); first.resolve(options); await settle();
+        assert.equal(view.root.querySelector('.stock-modal h2').textContent, 'Գրանցել ներքին ելք');
+        assert.equal(view.root.querySelector('.stock-modal select').value, '2');
+    } finally { view.unmount(); }
+});
+
+test('overlapping request reviews submit only the latest request and suggest available quantities for an unapproved decimal zero', async () => {
+    const first = deferred(); const second = deferred(); const writes = [];
+    const records = [1, 2].map(id => ({ id, request_no: `REVIEW-${id}`, status: 'review', branch_id: 2 }));
+    const view = await mountView('views/requests/Index.vue', '/requests', {
+        async get(endpoint) { return endpoint === 'pages/requests' ? list(records) : endpoint === 'requests/1' ? first.promise : second.promise; },
+        async post(endpoint, body) { writes.push({ endpoint, body }); return {}; },
+    }, { id: 7, location_id: 0, permissions: { 'requests.view': true, 'requests.approve': true } });
+    try {
+        await settle();
+        for (const row of view.root.querySelectorAll('tbody tr')) {
+            [...row.querySelectorAll('button')].find(button => button.textContent === 'Դիտարկել').click(); await settle();
+        }
+        const snapshot = id => ({ data: { data: { ...records[id - 1], items: [{ id: id * 10, name: `Product ${id}`, unit: 'հատ', requested_qty: '5.000', approved_qty: '0.000', central_free_qty: '2.000' }] } } });
+        second.resolve(snapshot(2)); await settle(); first.resolve(snapshot(1)); await settle();
+        assert.equal(view.root.querySelector('.request-modal h2').textContent, 'REVIEW-2');
+        assert.equal(view.root.querySelector('.approval-line input').value, '2');
+        view.root.querySelector('.request-modal .primary-button').click(); await settle();
+        assert.deepEqual(writes, [{ endpoint: 'requests/2/review', body: { decision: 'approve', approved: { 20: 2 } } }]);
+    } finally { view.unmount(); }
+});
+
+test('new requests select a real destination for central users and keep a branch user at their own destination', async () => {
+    const branches = [{ id: 9, name: 'Central', code: 'CENTRAL' }, { id: 3, name: 'Arabkir', code: 'ARAB' }, { id: 2, name: 'Erebuni', code: 'EREB' }];
+    for (const { location, branch, expected } of [{ location: 0, branch: 9, expected: '3' }, { location: 2, branch: 2, expected: '2' }]) {
+        const suggestions = [];
+        const view = await mountView('views/requests/Index.vue', '/requests', {
+            async get(endpoint, options) {
+                if (endpoint === 'pages/requests') return list([]);
+                if (endpoint === 'catalog/requests/options') return { data: { data: { branches, products: [] } } };
+                suggestions.push(options.params.branch_id); return { data: { data: { items: {} } } };
+            },
+            async post() { assert.fail('opening a request must not write'); },
+        }, { id: 7, location_id: location, branch: { id: branch }, permissions: { 'requests.view': true, 'requests.create': true } });
+        try {
+            await settle(); view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            const destination = view.root.querySelector('.request-modal .form-grid select');
+            assert.equal(destination.value, expected);
+            assert.equal(destination.disabled, location > 0);
+            assert.ok(suggestions.length > 0);
+            assert.ok(suggestions.every(id => String(id) === expected));
+        } finally { view.unmount(); }
+    }
+});
+
+test('late mutation form loads cannot reopen after an account change or permission revocation', async () => {
+    for (const module of ['requests', 'inventory', 'stock']) {
+        for (const revoked of [false, true]) {
+            const pending = deferred(); let writes = 0;
+            const user = { id: 7, branch: { id: 2 }, location_id: 2, permissions: { [`${module}.view`]: true, [`${module}.edit`]: true } };
+            const request = { id: 1, request_no: 'OLD-DRAFT', status: 'draft', branch_id: 2, requested_by: 7, items: [] };
+            const inventory = inventorySnapshot(1, { status: 'open', lines_count: 1, counted_lines_count: 0 });
+            const stock = { id: 1, code: 'P-1', name: 'Old stock', quantity: 5, min_qty: 0, unit: 'հատ' };
+            const view = await mountView(`views/${module}/Index.vue`, `/${module}`, {
+                async get(endpoint) {
+                    if (endpoint === 'pages/requests') return list([request]);
+                    if (endpoint === 'inventory') return list([inventory]);
+                    if (endpoint === 'pages/stock') return list([stock]);
+                    if (endpoint === 'catalog/requests/options') return { data: { data: { branches: [{ id: 2, name: 'Erebuni' }], products: [] } } };
+                    return pending.promise;
+                },
+                async post() { writes += 1; }, async put() { writes += 1; },
+            }, user);
+            try {
+                await settle();
+                if (module === 'requests') [...view.root.querySelectorAll('tbody button')].find(button => button.textContent === 'Խմբագրել').click();
+                else if (module === 'inventory') [...view.root.querySelectorAll('tbody button')].find(button => button.textContent === 'Լրացնել քանակները').click();
+                else view.root.querySelector('tbody [title="Ճշգրտել"]').click();
+                await settle();
+                window.dispatchEvent(new CustomEvent('lager:user', { detail: revoked ? { ...user, permissions: {} } : { ...user, id: 8, location_id: 3, branch: { id: 3 } } }));
+                await settle();
+                pending.resolve(module === 'requests' ? { data: { data: request } } : module === 'inventory' ? { data: { data: { session: inventory, suppliers: [] } } } : { data: { data: { products: [stock], branches: [{ id: 2, name: 'Erebuni' }] } } });
+                await settle();
+                assert.equal(view.root.querySelector('.modal-backdrop'), null, `${module}: ${revoked ? 'permission revoked' : 'account changed'}`);
+                assert.equal(writes, 0);
+            } finally { view.unmount(); }
+        }
+    }
+});
+
+test('a save completion from the previous account cannot close or overwrite the new account draft', async () => {
+    for (const module of ['requests', 'inventory', 'stock']) {
+        const pending = deferred(); const writes = [];
+        const product = { id: 1, code: 'P-1', name: 'Reagent', quantity: 5, min_qty: 0, unit: 'հատ' };
+        const user = { id: 7, branch: { id: 2 }, location_id: 2, permissions: { [`${module}.view`]: true, [`${module}.create`]: true } };
+        const view = await mountView(`views/${module}/Index.vue`, `/${module}`, {
+            async get(endpoint) {
+                if (endpoint === 'inventory') return list([], {}, { locations: [{ id: 2, name: 'Erebuni' }] });
+                if (endpoint.startsWith('pages/')) return list(module === 'stock' ? [product] : []);
+                if (endpoint === 'requests/suggestions') return { data: { data: { items: {} } } };
+                return { data: { data: { products: [product], branches: [{ id: 2, name: 'Erebuni' }] } } };
+            },
+            post(endpoint, body) { writes.push({ endpoint, body }); return pending.promise; },
+        }, user);
+        try {
+            await settle();
+            const open = () => module === 'stock' ? view.root.querySelector('tbody [title="Գրանցել ելք"]').click() : view.root.querySelector('.page-heading .primary-button').click();
+            const modal = () => view.root.querySelector('form.modal-card');
+            open(); await settle();
+            submit(modal()); await settle();
+            assert.equal(writes.length, 1, module);
+            window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8 } })); await settle();
+            assert.equal(modal(), null, module);
+            open(); await settle();
+            const currentForm = modal();
+            assert.ok(currentForm, module);
+            const field = module === 'stock' ? currentForm.querySelector('input[type="number"]') : currentForm.querySelector('textarea');
+            change(field, module === 'stock' ? '4' : 'New account draft'); await settle();
+            pending.resolve({}); await settle();
+            assert.equal(modal(), currentForm, module);
+            assert.equal(field.value, module === 'stock' ? '4' : 'New account draft');
+            assert.equal(view.root.querySelector('.notice-success'), null, module);
+            assert.equal(currentForm.querySelector('.primary-button').disabled, false, module);
+            assert.equal(writes.length, 1, module);
         } finally { view.unmount(); }
     }
 });

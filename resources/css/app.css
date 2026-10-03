@@ -342,7 +342,7 @@ textarea.form-control,.form-grid textarea,.transfer-modal textarea,.request-moda
 
 /* Keep list filters visually aligned across pages. */
 .list-filter-bar,.expiry-toolbar,.movement-filter-grid,.report-filter-grid{align-items:end}
-.list-filter-bar .form-field,.expiry-toolbar .form-field,.movement-filter-grid .form-field,.report-filter-grid .form-field{grid-template-rows:16px 48px;gap:6px;min-width:0;overflow:hidden;white-space:nowrap}
+.list-filter-bar .form-field,.expiry-toolbar .form-field,.movement-filter-grid .form-field,.report-filter-grid .form-field{grid-template-rows:minmax(17px,auto) 48px;gap:6px;min-width:0;white-space:normal;overflow-wrap:anywhere}
 .list-filter-bar .form-control,.expiry-toolbar .form-control,.movement-filter-grid .form-control,.report-filter-grid .form-control,.list-filter-bar .date-picker-control,.expiry-toolbar .date-picker-control,.movement-filter-grid .date-picker-control,.report-filter-grid .date-picker-control{width:100%;height:48px;min-width:0}
 .list-filter-actions button,.expiry-toolbar>button,.movement-filter-submit,.report-apply{height:48px;min-height:48px;white-space:nowrap}
 .expiry-toolbar{grid-template-columns:minmax(180px,.8fr) minmax(240px,1.7fr) auto auto}
@@ -523,3 +523,45 @@ input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.55;cursor:not-
 .table-actions .icon-button[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translate(-50%,4px);padding:7px 10px;border:1px solid #35466b;border-radius:8px;background:#172541;color:#fff;font-size:10px;font-weight:700;line-height:1.2;white-space:nowrap;box-shadow:0 7px 18px #101b3130;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s ease,transform .15s ease,visibility .15s ease}
 .table-actions .icon-button[data-tooltip]::before{content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translate(-50%,4px);border:5px solid transparent;border-top-color:#172541;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .15s ease,transform .15s ease,visibility .15s ease}
 .table-actions .icon-button[data-tooltip]:hover::after,.table-actions .icon-button[data-tooltip]:focus-visible::after,.table-actions .icon-button[data-tooltip]:hover::before,.table-actions .icon-button[data-tooltip]:focus-visible::before{opacity:1;visibility:visible;transform:translate(-50%,0)}
+
+/* Keep controls reachable when a tablet or a short viewport reduces usable space. */
+@media screen{
+  body{min-width:0}
+  .topbar-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topbar-actions{flex-shrink:0}
+  .date-picker-popover{max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+  .inventory-act-toolbar{flex-wrap:wrap}
+}
+@media screen and (min-width:761px){
+  .topbar{gap:12px}
+}
+@media screen and (max-width:1100px){
+  .topbar-user{display:none}
+  .profile-trigger{min-width:0;width:42px;height:42px;justify-content:center;padding:2px;border:0;background:transparent}
+  .profile-trigger-copy,.profile-chevron{display:none}
+  .page-heading-actions,.stock-actions{width:100%;grid-auto-columns:minmax(0,1fr)}
+  .table-scroll>.data-table:not(.stock-matrix-table):not(.movements-table){min-width:750px}
+  .table-scroll>.data-table:not(.stock-matrix-table):not(.movements-table) th{min-width:100px;overflow-wrap:normal}
+  .expiry-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .expiry-toolbar .expiry-search{grid-column:1/-1}
+}
+@media screen and (max-width:1024px){
+  .sidebar{width:min(290px,84vw);padding:20px 16px 14px;transform:translateX(-105%);transition:transform .22s ease;z-index:30;box-shadow:12px 0 36px #08122635}
+  .sidebar.mobile-open{transform:translateX(0)}
+  .mobile-nav-backdrop{display:block;position:fixed;inset:0;border:0;border-radius:0;background:#101b3178;backdrop-filter:blur(2px);z-index:25}
+  .main-area{width:100%;margin-left:0}
+}
+@media screen and (max-width:900px){
+  .receipt-line{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .receipt-lot-product{grid-column:1/-1}
+}
+@media screen and (max-width:560px){
+  .receipt-line,.approval-line{grid-template-columns:minmax(0,1fr)}
+}
+@media screen and (max-width:430px){
+  .expiry-toolbar{grid-template-columns:minmax(0,1fr)}
+  .expiry-toolbar .expiry-search{grid-column:auto}
+}
+@media screen and (max-height:640px){
+  .inventory-count-toolbar+.inventory-lines{max-height:none;overflow-y:visible;padding-right:0}
+}

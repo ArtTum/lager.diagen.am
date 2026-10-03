@@ -155,6 +155,44 @@ class PurchasingWorkflowApiTest extends TestCase
         self::assertSame('approved', $orders['FULL']->fresh()->status);
     }
 
+    public function test_receipt_rejects_a_product_deactivated_after_order_approval_without_creating_hidden_stock(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $supplier = Supplier::query()->create(['name' => 'Outstanding order supplier', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'DEACTIVATED-ORDER', 'name' => 'Pending receipt item', 'unit' => 'հատ', 'purchase_price' => 100,
+            'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $actor = $this->centralActor($central);
+        Permission::query()->create(['code' => 'products.delete', 'title' => 'Deactivate product', 'module' => 'products']);
+        $this->actingAs($actor, 'sanctum');
+        $created = $this->postJson('/api/purchases', [
+            'supplier_id' => $supplier->id, 'ordered_on' => now()->toDateString(),
+            'items' => [['product_id' => $product->id, 'qty' => 2, 'unit_cost' => 100]],
+        ])->assertCreated();
+        $orderId = (int) $created->json('data.id');
+        $item = PurchaseOrderItem::query()->where('purchase_order_id', $orderId)->sole();
+        $this->postJson('/api/purchases/'.$orderId.'/approve')->assertOk();
+        $this->deleteJson('/api/catalog/products/'.$product->id)->assertOk();
+        self::assertFalse($product->fresh()->active);
+
+        $data = [
+            'purchase_order_id' => $orderId, 'received_on' => now()->toDateString(),
+            'items' => [['purchase_order_item_id' => $item->id, 'qty' => 2, 'lot_no' => 'RECEIPT-LOT']],
+        ];
+        $this->postJson('/api/receipts', $data)->assertUnprocessable()->assertJsonValidationErrors('items');
+        self::assertSame(0, Receipt::query()->count());
+        self::assertSame(0, ReceiptItem::query()->count());
+        self::assertSame(0, StockLot::query()->count());
+        self::assertSame(0, Movement::query()->count());
+        self::assertSame('0.000', $item->fresh()->received_qty);
+
+        $product->refresh()->update(['active' => true]);
+        $this->postJson('/api/receipts', $data)->assertCreated();
+        self::assertSame('2.000', $item->fresh()->received_qty);
+        self::assertSame(0, (int) StockLot::query()->sole()->location_id);
+    }
+
     public function test_supplier_purchase_to_branch_consumption_and_stock_report_work_as_one_api_lifecycle(): void
     {
         $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);

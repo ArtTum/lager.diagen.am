@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router';
 import api from '@/services/api';
 import { formatDisplayDate } from '@/dateUtils';
 import { currentUser } from '@/router';
+import { userContextChanged } from '@/router/access';
 import ExportActions from '@/components/ExportActions.vue';
 import ListFilterBar from '@/components/ListFilterBar.vue';
 
@@ -22,6 +23,8 @@ const can = (permission) => Boolean(user.value?.permissions?.[permission]);
 const form = reactive({ direction: 'branch_to_central', from_location: '', supplier_id: '', reason: '', items: [{ product_id: '', qty: '' }] });
 let debounce;
 let listRequestVersion = 0;
+let formRequestVersion = 0;
+let mutationSessionVersion = 0;
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
   const version = ++listRequestVersion;
   busy.value = true; error.value = '';
@@ -31,29 +34,42 @@ async function load(page = 1, pageSize = result.value?.pagination.per_page || 15
 }
 function resetFilters() { Object.assign(filters, { direction: '', from: '', to: '' }); load(1); }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-const updateUser = (event) => { user.value = event.detail; };
+const updateUser = (event) => {
+  const changed = userContextChanged(user.value, event.detail); user.value = event.detail;
+  if (!changed) return;
+  closeModal(); mutationSessionVersion += 1; listRequestVersion += 1;
+  result.value = null; options.value = { branches: [], products: [], suppliers: [] }; busy.value = false; saving.value = false; error.value = ''; notice.value = '';
+  if (can('returns.view')) load(1);
+};
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); });
-onBeforeUnmount(() => { listRequestVersion += 1; clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
+onBeforeUnmount(() => { listRequestVersion += 1; mutationSessionVersion += 1; closeModal(); clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); });
+function closeModal() { formRequestVersion += 1; modal.value = false; }
 function addLine() { form.items.push({ product_id: '', qty: '' }); }
 function removeLine(index) { if (form.items.length > 1) form.items.splice(index, 1); }
 async function openCreate() {
+  if (saving.value || !can('returns.view') || !can('returns.create')) return;
+  closeModal(); const version = formRequestVersion;
   error.value = '';
   try {
-    const response = await api.get('returns/options'); options.value = response.data.data;
+    const response = await api.get('returns/options');
+    if (version !== formRequestVersion || !can('returns.view') || !can('returns.create')) return;
+    options.value = response.data.data;
     Object.assign(form, { direction: 'branch_to_central', from_location: String(options.value.branches[0]?.id || ''), supplier_id: '', reason: '', items: [{ product_id: '', qty: '' }] });
     modal.value = true;
-  } catch (e) { error.value = e.response?.data?.message || 'Վերադարձի ձևը չհաջողվեց բացել։'; }
+  } catch (e) { if (version === formRequestVersion) error.value = e.response?.data?.message || 'Վերադարձի ձևը չհաջողվեց բացել։'; }
 }
 async function save() {
-  if (saving.value) return; saving.value = true; error.value = '';
+  if (saving.value || !modal.value || !can('returns.view') || !can('returns.create')) return;
+  const session = mutationSessionVersion; saving.value = true; error.value = '';
   try {
     const body = { ...form, from_location: form.direction === 'branch_to_central' ? Number(form.from_location) : 0,
       supplier_id: form.direction === 'central_to_supplier' ? Number(form.supplier_id) : null,
       items: form.items.map((item) => ({ product_id: Number(item.product_id), qty: Number(item.qty) })) };
-    await api.post('returns', body); modal.value = false; notice.value = 'Վերադարձը գրանցվեց, մնացորդը և շարժերի մատյանը թարմացվեցին։';
-    await load(1); setTimeout(() => { notice.value = ''; }, 3500);
-  } catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Վերադարձը չգրանցվեց։'; }
-  finally { saving.value = false; }
+    await api.post('returns', body); if (session !== mutationSessionVersion) return;
+    closeModal(); notice.value = 'Վերադարձը գրանցվեց, մնացորդը և շարժերի մատյանը թարմացվեցին։';
+    await load(1); setTimeout(() => { if (session === mutationSessionVersion) notice.value = ''; }, 3500);
+  } catch (e) { if (session === mutationSessionVersion) error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Վերադարձը չգրանցվեց։'; }
+  finally { if (session === mutationSessionVersion) saving.value = false; }
 }
 const directionName = (direction) => direction === 'central_to_supplier' ? 'Կենտրոն → Մատակարար' : 'Մասնաճյուղ → Կենտրոն';
 useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy: () => busy.value || saving.value });
@@ -67,9 +83,9 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
     <tr v-if="!busy && result && !rows.length"><td colspan="8" class="table-empty">Վերադարձի գրառումներ դեռ չկան։</td></tr><tr v-if="busy && !result"><td colspan="8" class="table-empty">Բեռնվում է…</td></tr>
   </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
-  <div v-if="modal" class="modal-backdrop" @click.self="modal=false"><form class="modal-card return-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԵՍՏԱՅԻՆ ԳՈՐԾԱՌՆՈՒԹՅՈՒՆ</p><h2>Գրանցել ապրանքների վերադարձ</h2><p>Ապրանքները կբաշխվեն ըստ LOT-ի ժամկետների՝ FEFO հերթականությամբ։</p></div><button type="button" class="icon-button close-button" @click="modal=false"><AppIcon name="xmark" /></button></div>
+  <div v-if="modal" class="modal-backdrop" @click.self="closeModal"><form class="modal-card return-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ՊԱՀԵՍՏԱՅԻՆ ԳՈՐԾԱՌՆՈՒԹՅՈՒՆ</p><h2>Գրանցել ապրանքների վերադարձ</h2><p>Ապրանքները կբաշխվեն ըստ LOT-ի ժամկետների՝ FEFO հերթականությամբ։</p></div><button type="button" class="icon-button close-button" @click="closeModal"><AppIcon name="xmark" /></button></div>
     <div class="form-grid"><label class="form-field">Վերադարձի ուղղություն *<select v-searchable-select v-model="form.direction" class="form-control"><option value="branch_to_central">Մասնաճյուղ → Կենտրոն</option><option v-if="options.suppliers.length" value="central_to_supplier">Կենտրոն → Մատակարար</option></select></label><label v-if="form.direction==='branch_to_central'" class="form-field">Մասնաճյուղ *<select v-searchable-select v-model="form.from_location" class="form-control" required><option value="">Ընտրել մասնաճյուղը</option><option v-for="branch in options.branches" :key="branch.id" :value="String(branch.id)">{{ branch.name }}</option></select></label><label v-else class="form-field">Մատակարար *<select v-searchable-select v-model="form.supplier_id" class="form-control" required><option value="">Ընտրել մատակարարին</option><option v-for="supplier in options.suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option></select></label></div>
     <div class="transfer-lines"><div class="section-label">Վերադարձվող ապրանքներ</div><div v-for="(line,index) in form.items" :key="index" class="return-item-row"><label class="form-field">Ապրանք *<select v-searchable-select v-model="line.product_id" class="form-control" required><option value="">Ընտրել ապրանքը</option><option v-for="product in options.products" :key="product.id" :value="product.id">{{ product.code }} · {{ product.name }}</option></select></label><label class="form-field">Քանակ *<input v-model="line.qty" class="form-control" type="number" min="0.001" step="0.001" required></label><button v-if="form.items.length>1" type="button" class="icon-button danger remove-line" title="Հեռացնել տողը" @click="removeLine(index)"><AppIcon name="xmark" /></button></div><button type="button" class="secondary-button add-line" @click="addLine"><AppIcon name="add" /> Ավելացնել ապրանք</button></div>
-    <label class="form-field return-reason">Պատճառ *<textarea v-model.trim="form.reason" class="form-control" minlength="3" maxlength="2000" required placeholder="Նշեք վերադարձի պատճառը"></textarea></label><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="modal=false">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Գրանցվում է…' : 'Գրանցել վերադարձը' }}</button></div>
+    <label class="form-field return-reason">Պատճառ *<textarea v-model.trim="form.reason" class="form-control" minlength="3" maxlength="2000" required placeholder="Նշեք վերադարձի պատճառը"></textarea></label><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="closeModal">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Գրանցվում է…' : 'Գրանցել վերադարձը' }}</button></div>
   </form></div>
 </template>

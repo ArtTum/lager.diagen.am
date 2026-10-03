@@ -62,6 +62,8 @@ const counts = reactive({});
 let debounce;
 let listRequestVersion = 0;
 let inspectionRequestVersion = 0;
+let formRequestVersion = 0;
+let mutationSessionVersion = 0;
 
 async function load(page = 1, pageSize = result.value?.pagination.per_page || 15) {
   const version = ++listRequestVersion;
@@ -76,7 +78,13 @@ async function load(page = 1, pageSize = result.value?.pagination.per_page || 15
 }
 function resetFilters() { Object.assign(filters, { status: '', from: '', to: '' }); load(1); }
 watch(search, () => { clearTimeout(debounce); debounce = setTimeout(() => load(1), 250); });
-const updateUser = (event) => { if (userContextChanged(user.value, event.detail)) closeInspection(); user.value = event.detail; };
+const updateUser = (event) => {
+  const changed = userContextChanged(user.value, event.detail); user.value = event.detail;
+  if (!changed) return;
+  closeInspection(); closeInventoryForm(); mutationSessionVersion += 1; listRequestVersion += 1;
+  saving.value = false; busy.value = false; result.value = null; suppliers.value = []; error.value = ''; notice.value = '';
+  if (can('inventory.view')) load(1);
+};
 const invalidateInspection = () => {
   if (!inspectionOpen.value || saving.value) return;
   inspectionRequestVersion += 1;
@@ -84,7 +92,12 @@ const invalidateInspection = () => {
   if (dialog.value === 'approve') { dialog.value = ''; selected.value = null; }
 };
 onMounted(() => { load(); window.addEventListener('lager:user', updateUser); window.addEventListener('lager:data-changed', invalidateInspection); });
-onBeforeUnmount(() => { listRequestVersion += 1; closeInspection(); clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); window.removeEventListener('lager:data-changed', invalidateInspection); });
+onBeforeUnmount(() => { listRequestVersion += 1; mutationSessionVersion += 1; closeInventoryForm(); closeInspection(); clearTimeout(debounce); window.removeEventListener('lager:user', updateUser); window.removeEventListener('lager:data-changed', invalidateInspection); });
+
+function closeInventoryForm() {
+  formRequestVersion += 1; dialog.value = ''; selected.value = null;
+  Object.keys(counts).forEach((key) => delete counts[key]);
+}
 
 function closeInspection() {
   inspectionRequestVersion += 1;
@@ -93,6 +106,7 @@ function closeInspection() {
 }
 async function openInspection(row) {
   if (!can('inventory.view')) return;
+  closeInventoryForm();
   const version = ++inspectionRequestVersion;
   inspectionTarget.value = { id: row.id, lines_count: row.lines_count };
   inspectionOpen.value = true; inspectionBusy.value = true; inspection.value = null; inspectionError.value = ''; inspectionStale.value = false;
@@ -119,6 +133,8 @@ function countDifference(line) {
 }
 
 function openStart() {
+  if (saving.value || !can('inventory.view') || !can('inventory.create')) return;
+  closeInventoryForm(); closeInspection();
   if (!locations.value.length) { error.value = 'Ակտիվ պահեստ չի գտնվել։'; return; }
   start.location_id = String(locations.value[0].id);
   start.note = '';
@@ -126,11 +142,18 @@ function openStart() {
   dialog.value = 'start';
 }
 async function openCount(row) {
+  if (saving.value || !can('inventory.view') || !can('inventory.edit') || !['open', 'counted'].includes(row.status)) return;
+  closeInventoryForm(); closeInspection(); const version = formRequestVersion;
   error.value = '';
   lineSearch.value = '';
   try {
     const response = await api.get(`inventory/${row.id}`);
-    selected.value = response.data.data.session;
+    if (version !== formRequestVersion || !can('inventory.edit')) return;
+    const snapshot = response.data.data.session;
+    if (Number(snapshot?.id) !== Number(row.id) || !['open', 'counted'].includes(snapshot.status) || !Array.isArray(snapshot.lines)) {
+      error.value = 'Գույքագրման հաշվարկը այլևս խմբագրման ենթակա չէ։ Թարմացրեք ցանկը։'; return;
+    }
+    selected.value = snapshot;
     suppliers.value = response.data.data.suppliers;
     if (!selected.value.lines?.length) {
       selected.value = null;
@@ -144,10 +167,11 @@ async function openCount(row) {
       supplier_id: line.counted_supplier_id || '', bin_location: line.counted_bin_location || '', unit_cost: line.counted_unit_cost || '',
     };
     dialog.value = 'count';
-  } catch (e) { error.value = e.response?.data?.message || 'Գույքագրման տողերը չհաջողվեց բացել։'; }
+  } catch (e) { if (version === formRequestVersion) error.value = e.response?.data?.message || 'Գույքագրման տողերը չհաջողվեց բացել։'; }
 }
 async function save() {
-  if (saving.value) return;
+  if (saving.value || !can('inventory.view') || (dialog.value === 'start' ? !can('inventory.create') : dialog.value !== 'count' || !selected.value || !can('inventory.edit'))) return;
+  const session = mutationSessionVersion;
   error.value = '';
   if (dialog.value === 'count') {
     const missingLine = (selected.value?.lines || []).find((line) => {
@@ -164,6 +188,7 @@ async function save() {
   try {
     if (dialog.value === 'start') {
       await api.post('inventory', { ...start, location_id: Number(start.location_id) });
+      if (session !== mutationSessionVersion) return;
       notice.value = 'Նոր գույքագրումը սկսվեց։';
     } else {
       const payload = Object.fromEntries(Object.entries(counts).map(([id, item]) => [id, {
@@ -173,28 +198,32 @@ async function save() {
         unit_cost: item.unit_cost === '' ? null : Number(item.unit_cost),
       }]));
       await api.put(`inventory/${selected.value.id}/count`, { counts: payload });
+      if (session !== mutationSessionVersion) return;
       notice.value = 'Փաստացի քանակները պահպանվեցին՝ անկախ հաստատման համար։';
     }
-    dialog.value = ''; selected.value = null;
+    closeInventoryForm();
     await load(result.value?.pagination.current_page || 1);
-    setTimeout(() => { notice.value = ''; }, 3500);
-  } catch (e) { error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գործողությունը չհաջողվեց։'; }
-  finally { saving.value = false; }
+    setTimeout(() => { if (session === mutationSessionVersion) notice.value = ''; }, 3500);
+  } catch (e) { if (session === mutationSessionVersion) error.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գործողությունը չհաջողվեց։'; }
+  finally { if (session === mutationSessionVersion) saving.value = false; }
 }
 async function approve() {
   if (!selected.value || saving.value || !canApproveInspection.value || Number(selected.value.id) !== Number(inspection.value?.id)) return;
+  const session = mutationSessionVersion;
   saving.value = true; error.value = '';
   try {
     await api.post(`inventory/${selected.value.id}/approve`);
+    if (session !== mutationSessionVersion) return;
     dialog.value = ''; selected.value = null; closeInspection();
     notice.value = 'Գույքագրումը անկախ ձևով հաստատվեց, տարբերությունները գրանցվեցին շարժերում։';
     await load(result.value?.pagination.current_page || 1);
-    setTimeout(() => { notice.value = ''; }, 3500);
+    setTimeout(() => { if (session === mutationSessionVersion) notice.value = ''; }, 3500);
   } catch (e) {
+    if (session !== mutationSessionVersion) return;
     inspectionError.value = Object.values(e.response?.data?.errors || {})[0]?.[0] || e.response?.data?.message || 'Գույքագրումը չհաստատվեց։';
     inspectionStale.value = true; dialog.value = ''; selected.value = null;
   }
-  finally { saving.value = false; }
+  finally { if (session === mutationSessionVersion) saving.value = false; }
 }
 function statusDescription(row) {
   return row.status === 'counted' && Number(row.started_by) === Number(user.value?.id)
@@ -215,13 +244,13 @@ useLiveRefresh(() => load(result.value?.pagination.current_page || 1), { isBusy:
       <tr v-if="!busy && result && !rows.length"><td colspan="7" class="table-empty">Գույքագրման գրառումներ չկան։ Սկսեք առաջին գույքագրումը։</td></tr><tr v-if="busy && !result"><td colspan="7" class="table-empty">Բեռնվում է…</td></tr>
     </tbody></table></div><Pagination v-if="result" :pagination="result.pagination" :busy="busy" @page-change="load" @per-page-change="load(1, $event)" /></section>
 
-  <div v-if="dialog==='start'" class="modal-backdrop" @click.self="dialog=''"><form class="modal-card" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ԳՈՒՅՔԱԳՐՄԱՆ ՍԿԻԶԲ</p><h2>Սկսել նոր գույքագրում</h2><p>Մնացորդները կֆիքսվեն հենց այս պահին՝ LOT առ LOT։</p></div><button type="button" class="icon-button close-button" @click="dialog=''"><AppIcon name="xmark" /></button></div><div class="form-grid"><label class="form-field span-2">Պահեստ *<select v-searchable-select v-model="start.location_id" class="form-control" required><option v-for="location in locations" :key="location.id" :value="String(location.id)">{{ location.name }}</option></select></label><label class="form-field span-2">Նշում<textarea v-model.trim="start.note" class="form-control"></textarea></label></div><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="dialog=''">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Սկսվում է…' : 'Սկսել գույքագրումը' }}</button></div></form></div>
+  <div v-if="dialog==='start'" class="modal-backdrop" @click.self="closeInventoryForm"><form class="modal-card" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">ԳՈՒՅՔԱԳՐՄԱՆ ՍԿԻԶԲ</p><h2>Սկսել նոր գույքագրում</h2><p>Մնացորդները կֆիքսվեն հենց այս պահին՝ LOT առ LOT։</p></div><button type="button" class="icon-button close-button" @click="closeInventoryForm"><AppIcon name="xmark" /></button></div><div class="form-grid"><label class="form-field span-2">Պահեստ *<select v-searchable-select v-model="start.location_id" class="form-control" required><option v-for="location in locations" :key="location.id" :value="String(location.id)">{{ location.name }}</option></select></label><label class="form-field span-2">Նշում<textarea v-model.trim="start.note" class="form-control"></textarea></label></div><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="closeInventoryForm">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Սկսվում է…' : 'Սկսել գույքագրումը' }}</button></div></form></div>
 
-  <div v-if="dialog==='count' && selected" class="modal-backdrop" @click.self="dialog=''"><form class="modal-card inventory-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">{{ selected.inventory_no }}</p><h2>Փաստացի հաշվարկ</h2><p>Յուրաքանչյուր տողի տարբերության դեպքում նշեք պատճառը։ Նոր LOT-ի տվյալները լրացվում են, եթե ապրանքի հաշվառված քանակը զրո է։</p></div><button type="button" class="icon-button close-button" @click="dialog=''"><AppIcon name="xmark" /></button></div><div v-if="!selected.lines?.length" class="inventory-empty-state" role="alert"><span class="metric-icon amber"><AppIcon name="alert" /></span><div><strong>Այս գույքագրումը տողեր չունի</strong><p>Սկզբնական մնացորդները չեն պահպանվել, ուստի դրանց հիման վրա հաշվարկ ներկայացնել հնարավոր չէ։ Փակեք այս պատուհանը և սկսեք նոր գույքագրում։</p></div></div><div v-else class="inventory-count-content"><div class="inventory-count-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model.trim="lineSearch" class="form-control" placeholder="Որոնել ապրանքով, կոդով կամ LOT-ով…"></label><span class="list-count">Գտնվել է <b>{{ visibleLines.length }}</b> / {{ selected.lines.length }} տող</span></div><div class="inventory-lines"><article v-for="line in visibleLines" :key="line.id" class="inventory-line"><div class="inventory-product"><strong>{{ line.product.code }} · {{ line.product.name }}</strong><small>LOT {{ line.lot?.lot_no || '—' }} · Հաշվառված՝ {{ line.expected_qty }} {{ line.product.unit }}</small></div><label class="form-field">Փաստացի քանակ *<input v-model="counts[line.id].counted_qty" class="form-control" type="number" min="0" step="0.001" required></label><label class="form-field">Տարբերության պատճառ<input v-model.trim="counts[line.id].reason" class="form-control" placeholder="Պարտադիր է, եթե կա տարբերություն"></label>
+  <div v-if="dialog==='count' && selected" class="modal-backdrop" @click.self="closeInventoryForm"><form class="modal-card inventory-modal" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">{{ selected.inventory_no }}</p><h2>Փաստացի հաշվարկ</h2><p>Յուրաքանչյուր տողի տարբերության դեպքում նշեք պատճառը։ Նոր LOT-ի տվյալները լրացվում են, եթե ապրանքի հաշվառված քանակը զրո է։</p></div><button type="button" class="icon-button close-button" @click="closeInventoryForm"><AppIcon name="xmark" /></button></div><div v-if="!selected.lines?.length" class="inventory-empty-state" role="alert"><span class="metric-icon amber"><AppIcon name="alert" /></span><div><strong>Այս գույքագրումը տողեր չունի</strong><p>Սկզբնական մնացորդները չեն պահպանվել, ուստի դրանց հիման վրա հաշվարկ ներկայացնել հնարավոր չէ։ Փակեք այս պատուհանը և սկսեք նոր գույքագրում։</p></div></div><div v-else class="inventory-count-content"><div class="inventory-count-toolbar"><label class="search-input"><span class="search-icon"><AppIcon name="search" /></span><input v-model.trim="lineSearch" class="form-control" placeholder="Որոնել ապրանքով, կոդով կամ LOT-ով…"></label><span class="list-count">Գտնվել է <b>{{ visibleLines.length }}</b> / {{ selected.lines.length }} տող</span></div><div class="inventory-lines"><article v-for="line in visibleLines" :key="line.id" class="inventory-line"><div class="inventory-product"><strong>{{ line.product.code }} · {{ line.product.name }}</strong><small>LOT {{ line.lot?.lot_no || '—' }} · Հաշվառված՝ {{ line.expected_qty }} {{ line.product.unit }}</small></div><label class="form-field">Փաստացի քանակ *<input v-model="counts[line.id].counted_qty" class="form-control" type="number" min="0" step="0.001" required></label><label class="form-field">Տարբերության պատճառ<input v-model.trim="counts[line.id].reason" class="form-control" placeholder="Պարտադիր է, եթե կա տարբերություն"></label>
       <div v-if="!line.lot_id" class="inventory-new-lot"><strong>Նոր LOT-ի տվյալներ</strong><label class="form-field">LOT համար<input v-model.trim="counts[line.id].lot_no" class="form-control" maxlength="100"></label><label class="form-field">Պիտանի է մինչև<DatePicker v-model="counts[line.id].expires_on" /></label><label class="form-field">Մատակարար<select v-searchable-select v-model="counts[line.id].supplier_id" class="form-control"><option value="">Նշված չէ</option><option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.name }}</option></select></label><label v-if="can('purchases.view')" class="form-field">Միավորի արժեք<input v-model="counts[line.id].unit_cost" class="form-control" type="number" min="0" step="0.01"></label><label class="form-field">Պահեստային տեղ<input v-model.trim="counts[line.id].bin_location" class="form-control"></label></div>
-    </article><div v-if="!visibleLines.length" class="table-empty">Որոնմամբ համապատասխան տող չի գտնվել։</div></div></div><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="dialog=''">Փակել</button><button class="primary-button" :disabled="saving || !selected.lines?.length">{{ saving ? 'Պահպանվում է…' : 'Ներկայացնել հաստատման' }}</button></div></form></div>
+    </article><div v-if="!visibleLines.length" class="table-empty">Որոնմամբ համապատասխան տող չի գտնվել։</div></div></div><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" @click="closeInventoryForm">Փակել</button><button class="primary-button" :disabled="saving || !selected.lines?.length">{{ saving ? 'Պահպանվում է…' : 'Ներկայացնել հաստատման' }}</button></div></form></div>
 
-  <div v-if="dialog==='approve' && selected" class="modal-backdrop" @click.self="dialog=''"><section class="modal-card confirm-card"><div class="metric-icon amber"><AppIcon name="alert" /></div><h2>Անկախ հաստատե՞լ գույքագրումը</h2><p><b>{{ selected.inventory_no }}</b></p><p class="muted">Հաստատողը պետք է տարբերվի գույքագրումը սկսած աշխատակցից։ Հաստատման ժամանակ մնացորդները կրկին կհամեմատվեն մեկնարկային վիճակի հետ։</p><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button class="secondary-button" @click="dialog=''">Չեղարկել</button><button class="primary-button" :disabled="saving || !canApproveInspection" @click="approve">{{ saving ? 'Հաստատվում է…' : 'Հաստատել և փակել' }}</button></div></section></div>
+  <div v-if="dialog==='approve' && selected" class="modal-backdrop" @click.self="closeInventoryForm"><section class="modal-card confirm-card"><div class="metric-icon amber"><AppIcon name="alert" /></div><h2>Անկախ հաստատե՞լ գույքագրումը</h2><p><b>{{ selected.inventory_no }}</b></p><p class="muted">Հաստատողը պետք է տարբերվի գույքագրումը սկսած աշխատակցից։ Հաստատման ժամանակ մնացորդները կրկին կհամեմատվեն մեկնարկային վիճակի հետ։</p><p v-if="error" class="form-error">{{ error }}</p><div class="modal-actions"><button class="secondary-button" @click="closeInventoryForm">Չեղարկել</button><button class="primary-button" :disabled="saving || !canApproveInspection" @click="approve">{{ saving ? 'Հաստատվում է…' : 'Հաստատել և փակել' }}</button></div></section></div>
   <div v-if="inspectionOpen && dialog !== 'approve'" class="modal-backdrop" @click.self="closeInspection" @keydown.esc="closeInspection">
     <section class="modal-card inventory-modal inventory-inspection-modal" role="dialog" aria-modal="true" aria-labelledby="inventory-inspection-title">
       <div class="modal-header"><div><p class="eyebrow">ԳՈՒՅՔԱԳՐՄԱՆ ՀԱՇՎԱՐԿ</p><h2 id="inventory-inspection-title">{{ inspection?.inventory_no || 'Գույքագրում' }}</h2><p>Համեմատեք հաշվառված և փաստացի քանակները և ստուգեք տարբերությունների պատճառները։</p></div><button type="button" class="icon-button close-button" aria-label="Փակել" @click="closeInspection"><AppIcon name="xmark" /></button></div>
