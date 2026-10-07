@@ -52,6 +52,7 @@ class BranchAdminScopeTest extends TestCase
         $transfers->method('lock')->with(1)->willReturn(new Transfer([
             'id' => 1, 'status' => 'shipped', 'from_branch' => 3, 'to_branch' => 4,
         ]));
+        $transfers->method('stockLocation')->with(4)->willReturn(4);
 
         $this->expectForbidden(fn () => (new TransferService($transfers))->receive(1, $this->branchAdmin(), '127.0.0.1'));
     }
@@ -62,6 +63,7 @@ class BranchAdminScopeTest extends TestCase
         $transfers->method('lock')->with(1)->willReturn(new Transfer([
             'id' => 1, 'status' => 'shipped', 'from_branch' => 2, 'to_branch' => 3,
         ]));
+        $transfers->method('stockLocation')->with(3)->willReturn(3);
         $actor = new User(['id' => 11, 'active' => true, 'branch_id' => null]);
         $actor->setRelation('role', new Role(['name' => 'storekeeper']));
 

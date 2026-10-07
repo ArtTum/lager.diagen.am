@@ -59,6 +59,74 @@ async function mountCatalog(page, api, user = actor(page)) {
     return { root, router, unmount() { app.unmount(); root.remove(); } };
 }
 
+test('new users require a password, while editing an existing user permits keeping it unchanged', async () => {
+    const view = await mountCatalog('users', { async get(endpoint) {
+        if (endpoint.startsWith('pages/')) return list();
+        if (endpoint.endsWith('/options')) return options('User role');
+        return { data: { data: { ...row(), email: 'user@example.test', role_id: 10 } } };
+    } });
+    try {
+        await settle(); create(view); await settle();
+        let password = draft(view).querySelector('input[type="password"]');
+        assert.equal(password.required, true);
+        assert.equal(password.checkValidity(), false, 'an empty new-user password blocks native form submission');
+        assert.equal(password.minLength, 8);
+        assert.match(password.closest('label').textContent, /\*/);
+        draft(view).querySelector('.close-button').click(); await settle();
+        view.root.querySelector('[title="Խմբագրել"]').click(); await settle();
+        password = draft(view).querySelector('input[type="password"]');
+        assert.equal(password.value, '');
+        assert.equal(password.required, false);
+        assert.equal(password.checkValidity(), true, 'editing allows an empty password to preserve the current one');
+        assert.equal(password.minLength, 8, 'a replacement password has the same minimum as user creation');
+        assert.doesNotMatch(password.closest('label').textContent, /\*/);
+    } finally { view.unmount(); }
+});
+
+test('user role choices show their human titles instead of internal role names in create and edit forms', async () => {
+    const roles = [
+        { id: 10, name: 'admin', title: 'Համակարգի ադմինիստրատոր' },
+        { id: 11, name: 'custom_f92b65c9651a155d', title: 'Թեստային պատասխանատու' },
+        { id: 12, name: 'legacy_role', title: '' },
+    ];
+    const view = await mountCatalog('users', { async get(endpoint) {
+        if (endpoint.startsWith('pages/')) return list();
+        if (endpoint.endsWith('/options')) {
+            const response = options('Choices'); response.data.data.roles = roles; return response;
+        }
+        return { data: { data: { ...row(), email: 'user@example.test', role_id: 11 } } };
+    } });
+    try {
+        await settle(); create(view); await settle();
+        let role = draft(view).querySelector('select');
+        assert.deepEqual([...role.options].slice(1).map((option) => [option.value, option.textContent]), [
+            ['10', roles[0].title], ['11', roles[1].title], ['12', 'legacy_role'],
+        ]);
+        draft(view).querySelector('.close-button').click(); await settle();
+        view.root.querySelector('[title="Խմբագրել"]').click(); await settle();
+        role = draft(view).querySelector('select');
+        assert.equal(role.value, '11');
+        assert.equal(role.selectedOptions[0].textContent, roles[1].title);
+    } finally { view.unmount(); }
+});
+
+for (const [page, limits] of [
+    ['branches', { 'Անվանում': 160, 'Կոդ': 40 }],
+    ['products', { 'Ապրանքի անվանում': 190, 'Ներքին կոդ': 80, 'Չափման միավոր': 50 }],
+    ['users', { 'Անուն': 160 }],
+]) {
+    test(`${page} inputs expose the API's name, code and unit length limits`, async () => {
+        const view = await mountCatalog(page, { get: async (endpoint) => endpoint.startsWith('pages/') ? list() : options('Choices') });
+        try {
+            await settle(); create(view); await settle();
+            for (const [label, maximum] of Object.entries(limits)) {
+                const field = [...draft(view).querySelectorAll('.form-field')].find((field) => field.textContent.replace(/\*/g, '').trim() === label);
+                assert.equal(field?.querySelector('input')?.maxLength, maximum, label);
+            }
+        } finally { view.unmount(); }
+    });
+}
+
 for (const page of ['products', 'branches', 'users', 'roles']) {
     test(`${page} ignore an old account's form opener while preserving the new account's draft and options`, async () => {
         const old = deferred(); let optionCalls = 0;

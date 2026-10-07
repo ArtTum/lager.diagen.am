@@ -73,6 +73,7 @@ class TransferWorkflowApiTest extends TestCase
         $sender = $this->user($source, 'branch', 10, ['transfers.create', 'transfers.edit', 'transfers.view']);
         $approver = $this->user($central, 'admin', 20, ['transfers.approve', 'transfers.view']);
         $centralWorker = $this->user($central, 'storekeeper', 21, ['transfers.edit', 'transfers.view']);
+        $unassignedCentralAdmin = $this->user(null, 'admin', 22, ['transfers.edit', 'transfers.view']);
         $receiver = $this->user($destination, 'branch', 30, ['transfers.edit', 'transfers.view']);
 
         $this->actingAs($sender, 'sanctum');
@@ -102,7 +103,13 @@ class TransferWorkflowApiTest extends TestCase
         $this->postJson("/api/transfers/{$transferId}/receive")->assertForbidden();
         self::assertSame('shipped', Transfer::query()->findOrFail($transferId)->status);
 
+        $this->actingAs($unassignedCentralAdmin, 'sanctum');
+        $this->postJson("/api/transfers/{$transferId}/receive")->assertForbidden();
+        self::assertSame('shipped', Transfer::query()->findOrFail($transferId)->status);
+
         $this->actingAs($receiver, 'sanctum');
+        $this->getJson('/api/pages/transfers')->assertOk()
+            ->assertJsonPath('data.0.to_location_id', $destination->id);
         $this->postJson("/api/transfers/{$transferId}/receive")->assertOk();
 
         self::assertSame('completed', Transfer::query()->findOrFail($transferId)->status);
@@ -110,6 +117,71 @@ class TransferWorkflowApiTest extends TestCase
         self::assertSame(2, StockLot::query()->count(), 'Receipt should increase the matching destination LOT instead of inserting a duplicate.');
         self::assertSame(['transfer_sent', 'branch_transfer'], Movement::query()->orderBy('id')->pluck('type')->all());
         self::assertSame(4, AuditLog::query()->count());
+    }
+
+    #[DataProvider('centralReceivingRoles')]
+    public function test_unassigned_central_staff_receive_transfers_to_the_central_stock_location(string $roleName): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $source = Branch::query()->create(['name' => 'Source', 'code' => 'SRC', 'active' => true]);
+        $unrelated = Branch::query()->create(['name' => 'Other', 'code' => 'OTHER', 'active' => true]);
+        $product = Product::query()->create([
+            'code' => 'CENTRAL-RECEIPT', 'name' => 'Central receipt item', 'unit' => 'հատ',
+            'purchase_price' => 100, 'lot_control' => true, 'expiry_control' => false, 'active' => true,
+        ]);
+        $lotData = [
+            'product_id' => $product->id, 'lot_no' => 'CENTRAL-BOUND', 'expires_on' => null,
+            'received_on' => now()->toDateString(), 'unit_cost' => 100,
+        ];
+        $sourceLot = StockLot::query()->create([...$lotData, 'location_id' => $source->id, 'qty' => 6]);
+        $centralLot = StockLot::query()->create([...$lotData, 'location_id' => 0, 'qty' => 10]);
+        $sender = $this->user($source, 'branch', 10, ['transfers.create', 'transfers.edit', 'transfers.view']);
+        $receiver = $this->user(null, $roleName, 20, ['transfers.approve', 'transfers.edit', 'transfers.view']);
+        $otherStaff = $this->user($unrelated, 'other_branch', 30, ['transfers.edit', 'transfers.view']);
+        $centralViewer = $this->user(null, 'central_viewer', 40, ['transfers.view']);
+        self::assertNull($receiver->branch_id);
+        self::assertSame(0, $receiver->currentLocationId());
+
+        $this->actingAs($sender, 'sanctum');
+        $created = $this->postJson('/api/transfers', [
+            'from_branch' => $source->id, 'to_branch' => $central->id,
+            'reason' => 'Transfer stock to the central warehouse',
+            'items' => [['product_id' => $product->id, 'qty' => 4]],
+        ])->assertCreated();
+        $transferId = (int) $created->json('data.id');
+
+        $this->actingAs($receiver, 'sanctum');
+        $this->postJson("/api/transfers/{$transferId}/approve")->assertOk();
+        $this->postJson("/api/transfers/{$transferId}/ship")->assertOk();
+        self::assertEquals(2.0, (float) $sourceLot->fresh()->qty);
+        self::assertEquals(10.0, (float) $centralLot->fresh()->qty, 'Shipping does not receive the stock prematurely.');
+        $this->getJson('/api/pages/transfers')->assertOk()
+            ->assertJsonPath('data.0.to_branch_id', $central->id)
+            ->assertJsonPath('data.0.to_location_id', 0);
+        self::assertSame(0, Movement::query()->where('type', 'transfer_sent')->sole()->to_location);
+
+        foreach ([$sender, $otherStaff, $centralViewer] as $unauthorized) {
+            $this->actingAs($unauthorized, 'sanctum');
+            $this->postJson("/api/transfers/{$transferId}/receive")->assertForbidden();
+        }
+        self::assertSame('shipped', Transfer::query()->findOrFail($transferId)->status);
+        self::assertEquals(10.0, (float) $centralLot->fresh()->qty);
+
+        $this->actingAs($receiver, 'sanctum');
+        $this->postJson("/api/transfers/{$transferId}/receive")->assertOk();
+        $completed = Transfer::query()->findOrFail($transferId);
+        self::assertSame('completed', $completed->status);
+        self::assertSame($receiver->id, $completed->received_by);
+        self::assertEquals(14.0, (float) $centralLot->fresh()->qty);
+        self::assertSame(2, StockLot::query()->count(), 'Receiving reuses the central location-zero LOT.');
+        self::assertSame(0, Movement::query()->where('type', 'branch_transfer')->sole()->to_location);
+        $this->postJson("/api/transfers/{$transferId}/receive")->assertConflict();
+        self::assertEquals(14.0, (float) $centralLot->fresh()->qty, 'A repeated receipt cannot add stock twice.');
+    }
+
+    public static function centralReceivingRoles(): array
+    {
+        return ['central administrator' => ['admin'], 'central storekeeper' => ['storekeeper']];
     }
 
     public function test_transfer_with_only_expired_stock_cannot_be_approved(): void
@@ -200,7 +272,7 @@ class TransferWorkflowApiTest extends TestCase
         ];
     }
 
-    private function user(Branch $branch, string $roleName, int $id, array $permissionCodes): User
+    private function user(?Branch $branch, string $roleName, int $id, array $permissionCodes): User
     {
         $role = Role::query()->create(['name' => $roleName, 'title' => $roleName]);
         foreach ($permissionCodes as $code) {
@@ -213,7 +285,7 @@ class TransferWorkflowApiTest extends TestCase
             $role->permissions()->attach($permission);
         }
 
-        $user = new User(['active' => true, 'branch_id' => $branch->id]);
+        $user = new User(['active' => true, 'branch_id' => $branch?->id]);
         $user->setAttribute('id', $id);
         $user->setRelation('branch', $branch);
         $user->setRelation('role', $role);

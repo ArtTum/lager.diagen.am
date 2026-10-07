@@ -696,6 +696,47 @@ test('transfer receiving is offered only to an editor assigned to the actual des
     }
 });
 
+test('transfer receiving uses normalized destination locations for central editors while preserving branch isolation', async () => {
+    const profiles = [
+        { label: 'central administrator without a branch', user: { role: { name: 'admin' }, location_id: 0, branch: null, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: 7 },
+        { label: 'central storekeeper without a branch', user: { role: { name: 'storekeeper' }, location_id: 0, branch: null, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: 7 },
+        { label: 'unrelated source branch editor', user: { location_id: 2, branch: { id: 2 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: null },
+        { label: 'destination branch editor', user: { location_id: 3, branch: { id: 3 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: 8 },
+        { label: 'central viewer without edit permission', user: { location_id: 0, branch: null, permissions: { 'transfers.view': true } }, expectedId: null },
+        { label: 'central editor without view permission', user: { location_id: 0, branch: null, permissions: { 'transfers.edit': true } }, expectedId: null },
+        { label: 'editor with no current location', user: { location_id: null, branch: { id: 1 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: null },
+        { label: 'branch ID cannot override the current location', user: { location_id: 2, branch: { id: 3 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expectedId: null },
+    ];
+    for (const { label, user, expectedId } of profiles) {
+        const records = [
+            { id: 7, transfer_no: 'TO-CENTRAL', status: 'shipped', from_branch_id: 2, to_branch_id: 1, to_location_id: 0 },
+            { id: 8, transfer_no: 'TO-BRANCH', status: 'shipped', from_branch_id: 2, to_branch_id: 3, to_location_id: 3 },
+        ];
+        const writes = [];
+        const view = await mountView('views/transfers/Index.vue', '/transfers', {
+            async get() { return list(records); },
+            async post(endpoint) {
+                writes.push(endpoint);
+                records.find((record) => endpoint === `transfers/${record.id}/receive`).status = 'completed';
+                return { data: {} };
+            },
+        }, user);
+        try {
+            await settle();
+            const receivingRows = [...view.root.querySelectorAll('tbody tr')].filter((row) => row.querySelector('button'));
+            assert.deepEqual(receivingRows.map((row) => row.querySelector('strong').textContent), expectedId === null ? [] : [expectedId === 7 ? 'TO-CENTRAL' : 'TO-BRANCH'], label);
+            if (expectedId !== null) {
+                receivingRows[0].querySelector('button').click(); await settle();
+                assert.ok(view.root.querySelector('.confirm-card'), label);
+                view.root.querySelector('.confirm-card .primary-button').click(); await settle();
+                assert.equal(view.root.querySelector('.confirm-card'), null, label);
+                assert.equal(view.root.querySelector('tbody button'), null, label);
+            }
+            assert.deepEqual(writes, expectedId === null ? [] : [`transfers/${expectedId}/receive`], label);
+        } finally { view.unmount(); }
+    }
+});
+
 test('transfer shipping follows the actual source or central location even for an administrator role', async () => {
     const profiles = [
         { label: 'central storekeeper', user: { role: { name: 'storekeeper' }, location_id: 0, branch: { id: 1 }, permissions: { 'transfers.view': true, 'transfers.edit': true } }, expected: true },

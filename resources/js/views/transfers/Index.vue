@@ -94,7 +94,12 @@ function actionFor(row) {
     if (!canView.value) return null;
     if (['pending', 'stock_shortage'].includes(row.status) && canApprove.value) return ['approve', row.status === 'stock_shortage' ? 'Վերաստուգել պաշարը' : 'Հաստատել'];
     if (row.status === 'approved' && canEdit.value && (isCentral.value || Number(user.value?.branch?.id) === Number(row.from_branch_id))) return ['ship', 'Ուղարկել'];
-    if (row.status === 'shipped' && canEdit.value && Number(user.value?.branch?.id) === Number(row.to_branch_id)) return ['receive', 'Ստանալ'];
+    if (row.status === 'shipped' && canEdit.value) {
+        const destinationMatches = row.to_location_id != null
+            ? user.value?.location_id != null && Number(user.value.location_id) === Number(row.to_location_id)
+            : user.value?.branch?.id != null && row.to_branch_id != null && Number(user.value.branch.id) === Number(row.to_branch_id);
+        if (destinationMatches) return ['receive', 'Ստանալ'];
+    }
     return null;
 }
 function confirm(row, action) {

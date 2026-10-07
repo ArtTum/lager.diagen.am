@@ -47,8 +47,13 @@ const fieldsByPage = {
     ],
     users: [
         ['name', 'Անուն', 'text', true], ['email', 'Էլ. փոստ', 'email', true], ['role_id', 'Դեր', 'roles', true],
-        ['branch_id', 'Մասնաճյուղ', 'branches'], ['password', 'Գաղտնաբառ', 'password'], ['active', 'Ակտիվ օգտահաշիվ', 'checkbox'],
+        ['branch_id', 'Մասնաճյուղ', 'branches'], ['password', 'Գաղտնաբառ', 'password', true], ['active', 'Ակտիվ օգտահաշիվ', 'checkbox'],
     ],
+};
+const fieldMaxLengths = {
+    branches: { name: 160, code: 40 },
+    products: { name: 190, code: 80, unit: 50 },
+    users: { name: 160 },
 };
 const emptyByPage = {
     branches: { name: '', code: '', address: '', manager: '', phone: '', active: true },
@@ -63,7 +68,9 @@ const createLabel = computed(() => ({ products: 'Ավելացնել ապրանք
 const editLabel = computed(() => ({ products: 'Խմբագրել ապրանքը', branches: 'Խմբագրել մասնաճյուղը', users: 'Խմբագրել օգտատիրոջը', roles: 'Խմբագրել դերը' })[page.value] || 'Խմբագրել գրառումը');
 const modulePermission = (action) => Boolean(me.value?.permissions?.[`${page.value}.${action}`]);
 const canCreate = computed(() => canCreateRecord(page.value, me.value?.permissions));
-const fields = computed(() => (fieldsByPage[page.value] || []).filter(([key]) => key !== 'purchase_price' || Boolean(me.value?.permissions?.['purchases.view'])));
+const fields = computed(() => (fieldsByPage[page.value] || [])
+    .filter(([key]) => key !== 'purchase_price' || Boolean(me.value?.permissions?.['purchases.view']))
+    .map(([key, label, type, required]) => [key, label, type, key === 'password' ? !selected.value : required]));
 const rows = computed(() => result.value?.data || []);
 const permissionsByModule = computed(() => (options.value.permissions || []).reduce((groups, item) => {
     (groups[item.module] ||= []).push(item);
@@ -308,9 +315,9 @@ useLiveRefresh(() => traceOpen.value && traceData.value ? loadTrace(traceData.va
 <div v-if="modal" class="modal-backdrop" @click.self="closeForm" @keydown.esc="closeForm"><form class="modal-card catalog-modal" :class="{ 'role-catalog-modal': page === 'roles' }" @submit.prevent="save"><div class="modal-header"><div><p class="eyebrow">{{ page === 'roles' ? 'ՀԱՍԱՆԵԼԻՈՒԹՅԱՆ ԿԱՌԱՎԱՐՈՒՄ' : 'ՏՎՅԱԼՆԵՐԻ ՔԱՐՏ' }}</p><h2>{{ selected ? editLabel : createLabel }}</h2><p class="muted">{{ page === 'roles' ? 'Կարգավորեք դերի հասանելիությունն ու թույլատրելի գործողությունները։' : 'Փոփոխությունները կգրանցվեն գործողությունների պատմությունում։' }}</p></div><button class="icon-button close-button" type="button" aria-label="Փակել" :disabled="saving" @click="closeForm"><AppIcon name="xmark" /></button></div>
         <div v-if="page === 'roles'" class="role-permission-list"><label class="form-field">Դերի անվանում *<input v-model.trim="form.title" class="form-control" maxlength="120" required :disabled="!!selected"></label><div class="permission-overview"><span class="permission-overview-icon"><AppIcon name="shield" /></span><div class="permission-overview-copy"><strong>Դերի հասանելիության կարգավորում</strong><small>Ընտրեք՝ որ բաժիններն ու գործողություններն են հասանելի այս դերին։</small></div><span class="permission-total"><b>{{ form.permissions.length }}</b> ընտրված</span></div><section v-for="(items,moduleName) in permissionsByModule" :key="moduleName" class="permission-group" :aria-labelledby="`permission-group-${moduleName}`"><header class="permission-group-head"><span class="permission-module-icon"><AppIcon :name="permissionModuleIcon(moduleName)" /></span><div class="permission-module-title"><h3 :id="`permission-group-${moduleName}`">{{ permissionModuleTitle(moduleName) }}</h3><small>{{ selectedPermissionCount(items) }} / {{ items.length }} իրավունք ընտրված</small></div><div class="permission-group-tools"><button type="button" :disabled="!!selected && !modulePermission('edit') || selectedPermissionCount(items) === items.length" @click="togglePermissionGroup(items, true)">Ընտրել բոլորը</button><button type="button" :disabled="!!selected && !modulePermission('edit') || selectedPermissionCount(items) === 0" @click="togglePermissionGroup(items, false)">Մաքրել</button></div></header><div class="permission-options"><label v-for="item in items" :key="item.code" class="permission-option" :class="{ 'is-selected': form.permissions.includes(item.code) }"><input v-model="form.permissions" type="checkbox" :value="item.code" :disabled="!!selected && !modulePermission('edit')"><span class="permission-option-check"><AppIcon name="success" /></span><span class="permission-option-title">{{ item.title }}</span></label></div></section></div>
         <div v-else class="form-grid"><label v-for="[key,label,type,required] in fields" :key="key" class="form-field" :class="{ 'span-2': ['address','barcode','storage_conditions'].includes(key) }"><span v-if="type === 'checkbox'">{{ label }}{{ required ? ' *' : '' }}</span><template v-else>{{ label }}{{ required ? ' *' : '' }}</template>
-            <select v-searchable-select v-if="['categories','suppliers','branches','roles'].includes(type)" v-model="form[key]" class="form-control" :required="!!required"><option value="">{{ key === 'category_id' || key === 'branch_id' ? 'Ընտրովի' : 'Ընտրել' }}</option><option v-for="item in selectOptions(type)" :key="item.id" :value="item.id">{{ item.name || item.title }}</option></select>
+            <select v-searchable-select v-if="['categories','suppliers','branches','roles'].includes(type)" v-model="form[key]" class="form-control" :required="!!required"><option value="">{{ key === 'category_id' || key === 'branch_id' ? 'Ընտրովի' : 'Ընտրել' }}</option><option v-for="item in selectOptions(type)" :key="item.id" :value="item.id">{{ type === 'roles' ? (item.title || item.name) : (item.name || item.title) }}</option></select>
             <input v-else-if="type === 'checkbox'" v-model="form[key]" type="checkbox">
-            <input v-else v-model="form[key]" class="form-control" :type="type" :required="!!required && (key !== 'password' || !selected)" :min="type === 'number' ? '0' : undefined" :step="type === 'number' ? (key === 'purchase_price' ? '0.01' : '0.001') : undefined" :maxlength="['name','code','unit'].includes(key) ? 190 : undefined">
+            <input v-else v-model="form[key]" class="form-control" :type="type" :required="!!required" :minlength="key === 'password' ? 8 : undefined" :min="type === 'number' ? '0' : undefined" :step="type === 'number' ? (key === 'purchase_price' ? '0.01' : '0.001') : undefined" :maxlength="fieldMaxLengths[page]?.[key]">
         </label></div>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="modal-actions"><button type="button" class="secondary-button" :disabled="saving" @click="closeForm">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Պահպանվում է…' : 'Պահպանել' }}</button></div>
 </form></div>

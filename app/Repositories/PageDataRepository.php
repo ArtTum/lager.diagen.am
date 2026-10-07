@@ -73,7 +73,9 @@ class PageDataRepository
             'transfers' => [['transfer_no' => 'Տեղափոխում', 'from_branch' => 'Ումից', 'to_branch' => 'Ուր', 'status' => 'Կարգավիճակ', 'reason' => 'Պատճառ', 'created_at' => 'Ստեղծվել է'],
                 Transfer::query()->join('branches as f', 'f.id', '=', 'transfers.from_branch')->join('branches as b', 'b.id', '=', 'transfers.to_branch')
                     ->when($location > 0, fn ($query) => $query->where(fn ($where) => $where->where('transfers.from_branch', $location)->orWhere('transfers.to_branch', $location)))
-                    ->select('transfers.id', 'transfers.from_branch as from_branch_id', 'transfers.to_branch as to_branch_id', 'transfers.transfer_no', 'f.name as from_branch', 'b.name as to_branch', 'transfers.status', 'transfers.reason', 'transfers.created_at')->orderByDesc('transfers.id'),
+                    ->select('transfers.id', 'transfers.from_branch as from_branch_id', 'transfers.to_branch as to_branch_id', 'transfers.transfer_no', 'f.name as from_branch', 'b.name as to_branch', 'transfers.status', 'transfers.reason', 'transfers.created_at')
+                    ->selectRaw("CASE WHEN b.code = 'CENTRAL' THEN 0 ELSE transfers.to_branch END as to_location_id")
+                    ->orderByDesc('transfers.id'),
                 ['transfers.transfer_no', 'f.name', 'b.name', 'transfers.status']],
             'returns' => [['return_no' => 'Վերադարձ', 'direction' => 'Ուղղություն', 'product' => 'Ապրանք', 'qty' => 'Քանակ', 'reason' => 'Պատճառ', 'created_at' => 'Ամսաթիվ'],
                 ProductReturn::query()->join('products as p', 'p.id', '=', 'returns.product_id')->when($location > 0, fn ($query) => $query->where('returns.from_location', $location))

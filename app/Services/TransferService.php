@@ -118,12 +118,12 @@ class TransferService
         DB::transaction(function () use ($id, $actor, $ip): void {
             $transfer = $this->transfers->lock($id);
             abort_unless($transfer && $transfer->status === 'shipped', 409, 'Ստացման սպասող տեղափոխումը չի գտնվել։');
+            $toLocation = $this->transfers->stockLocation((int) $transfer->to_branch);
             abort_unless(
-                (int) $actor->branch_id === (int) $transfer->to_branch,
+                $actor->currentLocationId() === $toLocation,
                 403,
                 'Կարող եք ընդունել միայն ձեր պահեստ ուղարկված ապրանքը։',
             );
-            $toLocation = $this->transfers->stockLocation((int) $transfer->to_branch);
             $fromLocation = $this->transfers->stockLocation((int) $transfer->from_branch);
             $sent = $this->transfers->sentLines((string) $transfer->transfer_no, $toLocation);
             if ($sent->isEmpty()) {
