@@ -38,7 +38,7 @@ const fieldsByPage = {
         ['manager', 'Պատասխանատու', 'text'], ['phone', 'Հեռախոս', 'tel'], ['active', 'Ակտիվ մասնաճյուղ', 'checkbox'],
     ],
     products: [
-        ['code', 'Ներքին կոդ', 'text', true], ['barcode', 'Շտրիխ կոդ', 'text'], ['name', 'Ապրանքի անվանում', 'text', true],
+        ['code', 'Ներքին կոդ', 'text'], ['barcode', 'Շտրիխ կոդ', 'text'], ['name', 'Ապրանքի անվանում', 'text', true],
         ['category_id', 'Ապրանքի տեսակ', 'categories'], ['subcategory', 'Ենթատեսակ', 'text'], ['supplier_id', 'Մատակարար', 'suppliers'],
         ['purchase_price', 'Գնման գին՝ դրամ', 'number', true], ['manufacturer', 'Արտադրող', 'text'], ['unit', 'Չափման միավոր', 'text', true],
         ['package', 'Փաթեթավորում', 'text'], ['min_qty', 'Նվազագույն մնացորդ (MIN)', 'number', true], ['optimal_qty', 'Նախընտրելի մնացորդ (OPTIMAL)', 'number', true],

@@ -39,7 +39,7 @@ class StoreCatalogRecordRequest extends FormRequest
         return match ($kind) {
             'branches' => ['name' => ['required', 'string', 'max:160'], 'code' => ['required', 'string', 'max:40', Rule::unique('branches', 'code')],
                 'address' => ['nullable', 'string', 'max:255'], 'manager' => ['nullable', 'string', 'max:160'], 'phone' => ['nullable', 'string', 'max:50'], 'active' => ['sometimes', 'boolean']],
-            'products' => ['code' => ['required', 'string', 'max:80', Rule::unique('products', 'code')], 'barcode' => ['nullable', 'string', 'max:100', Rule::unique('products', 'barcode')],
+            'products' => ['code' => ['nullable', 'string', 'max:80', Rule::unique('products', 'code')], 'barcode' => ['nullable', 'string', 'max:100', Rule::unique('products', 'barcode')],
                 'name' => ['required', 'string', 'max:190'], 'category_id' => ['nullable', 'integer', 'exists:categories,id'], 'subcategory' => ['nullable', 'string', 'max:120'],
                 'supplier_id' => ['nullable', 'integer', Rule::exists('suppliers', 'id')->where('active', true)],
                 'purchase_price' => $this->user()?->hasPermissionCode('purchases.view') ? ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:999999999999.99'] : ['sometimes', 'numeric', 'decimal:0,2', 'min:0', 'max:999999999999.99'],

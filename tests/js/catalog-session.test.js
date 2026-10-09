@@ -110,6 +110,29 @@ test('user role choices show their human titles instead of internal role names i
     } finally { view.unmount(); }
 });
 
+test('product internal codes are optional in both create and edit forms', async () => {
+    const view = await mountCatalog('products', { async get(endpoint) {
+        if (endpoint.startsWith('pages/')) return list();
+        if (endpoint.endsWith('/options')) return options('Choices');
+        return { data: { data: { ...row(), code: 'EXISTING', unit: 'pcs' } } };
+    } });
+    try {
+        await settle(); create(view); await settle();
+        for (const editing of [false, true]) {
+            if (editing) {
+                draft(view).querySelector('.close-button').click(); await settle();
+                view.root.querySelector('[title="Խմբագրել"]').click(); await settle();
+            }
+            const field = [...draft(view).querySelectorAll('.form-field')].find((field) => field.textContent.includes('Ներքին կոդ'));
+            const code = field.querySelector('input');
+            change(code, ''); await settle();
+            assert.equal(code.required, false);
+            assert.equal(code.checkValidity(), true);
+            assert.doesNotMatch(field.textContent, /\*/);
+        }
+    } finally { view.unmount(); }
+});
+
 for (const [page, limits] of [
     ['branches', { 'Անվանում': 160, 'Կոդ': 40 }],
     ['products', { 'Ապրանքի անվանում': 190, 'Ներքին կոդ': 80, 'Չափման միավոր': 50 }],
