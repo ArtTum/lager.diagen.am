@@ -22,7 +22,7 @@ class CentralLocationLabelsTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['inventory_lines', 'inventory_sessions', 'users', 'movements', 'stock_lots', 'products', 'categories', 'suppliers', 'branches'] as $table) {
+        foreach (['audit_logs', 'inventory_lines', 'inventory_sessions', 'users', 'movements', 'stock_lots', 'products', 'categories', 'suppliers', 'branches'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -51,6 +51,9 @@ class CentralLocationLabelsTest extends TestCase
 
     private function createSchema(): void
     {
+        Schema::create('audit_logs', function (Blueprint $table): void {
+            $table->id(); $table->string('entity'); $table->unsignedBigInteger('entity_id'); $table->dateTime('created_at');
+        });
         Schema::create('branches', function (Blueprint $table): void {
             $table->id();
             $table->string('name');

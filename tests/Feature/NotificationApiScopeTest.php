@@ -204,6 +204,19 @@ class NotificationApiScopeTest extends TestCase
         $this->getJson('/api/notifications')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('unread_count', 0);
     }
 
+    public function test_a_recent_transfer_reminder_precedes_older_request_history(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $viewer = $this->user($central, 'mixed-viewer@example.test', ['notifications.view', 'requests.view', 'transfers.view'], 'viewer');
+        $request = StockRequest::query()->create(['request_no' => 'OLD-APPROVAL', 'branch_id' => $branch->id, 'status' => 'closed', 'created_at' => now()->subDays(2)]);
+        AuditLog::query()->create(['entity' => 'stock_requests', 'entity_id' => $request->id, 'after_data' => ['status' => 'approved'], 'created_at' => now()->subDay()]);
+        $transfer = Transfer::query()->create(['transfer_no' => 'NEW-INCOMING', 'from_branch' => $branch->id, 'to_branch' => $central->id, 'status' => 'shipped', 'created_at' => now()->subDays(3)]);
+        AuditLog::query()->create(['entity' => 'transfers', 'entity_id' => $transfer->id, 'after_data' => ['status' => 'shipped'], 'created_at' => now()]);
+        $this->actingAs($viewer, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.link', '/transfers')->assertJsonPath('data.1.link', '/requests');
+    }
+
     private function lot(Product $product, int $locationId, float $qty): StockLot
     {
         return StockLot::query()->create([
