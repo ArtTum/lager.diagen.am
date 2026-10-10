@@ -9,6 +9,7 @@ use App\Models\StockLot;
 use App\Models\StockRequest;
 use App\Models\Transfer;
 use App\Models\UserNotificationRead;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class NotificationRepository
@@ -42,6 +43,7 @@ class NotificationRepository
             ->whereIn('stock_requests.status', ['sent', 'review'])
             ->when($location > 0, fn ($query) => $query->where('stock_requests.branch_id', $location))
             ->select('stock_requests.id', 'stock_requests.request_no', 'stock_requests.status', 'stock_requests.created_at', 'b.name as branch_name')
+            ->addSelect(['notice_updated_at' => $this->lastChange('stock_requests')])
             ->orderByDesc('stock_requests.id')->limit(50)->get();
     }
 
@@ -71,31 +73,36 @@ class NotificationRepository
         }
 
         return $query->select('inventory_sessions.inventory_no', 'inventory_sessions.status', 'inventory_sessions.started_at')
+            ->addSelect(['notice_updated_at' => $this->lastChange('inventory_sessions')])
             ->selectRaw("CASE WHEN inventory_sessions.location_id = 0 THEN 'Կենտրոնական պահեստ' ELSE COALESCE(b.name, 'Անհայտ պահեստ') END as branch_name")
             ->orderBy('inventory_sessions.started_at')->limit(50)->get();
     }
 
-    public function recentlyUpdatedRequests(int $location): Collection
+    public function requestEvents(int $location, int $actorId): Collection
     {
-        if ($location < 1) {
-            return collect();
-        }
-        $ids = AuditLog::query()->where('entity', 'stock_requests')->whereNotNull('entity_id')
-            ->where('created_at', '>=', now()->subDays(7))->orderByDesc('created_at')->limit(300)->pluck('entity_id')->unique();
-        if ($ids->isEmpty()) {
-            return collect();
-        }
-
-        return StockRequest::query()->whereIn('id', $ids)->where('branch_id', $location)
-            ->whereIn('status', ['approved', 'partially_approved', 'rejected', 'received'])
-            ->orderByDesc('id')->limit(10)->get(['request_no', 'status', 'rejection_reason']);
+        // Read transitions, rather than the request's current status: a quick
+        // collect/ship/receive must not erase an unseen approval notification.
+        return AuditLog::query()->join('stock_requests as r', 'r.id', '=', 'audit_logs.entity_id')
+            ->join('branches as b', 'b.id', '=', 'r.branch_id')
+            ->where('audit_logs.entity', 'stock_requests')
+            ->where('audit_logs.created_at', '>=', now()->subDays(7))
+            ->where(fn ($query) => $query->whereNull('audit_logs.actor_id')->orWhere('audit_logs.actor_id', '<>', $actorId))
+            ->when($location > 0, fn ($query) => $query->where('r.branch_id', $location))
+            ->select('audit_logs.*', 'r.request_no', 'r.rejection_reason', 'b.name as branch_name')
+            ->orderByDesc('audit_logs.created_at')->orderByDesc('audit_logs.id')->limit(1000)->get()
+            ->filter(static fn (AuditLog $event): bool => in_array($event->after_data['status'] ?? null,
+                ['sent', 'review', 'approved', 'partially_approved', 'rejected', 'collecting', 'ready_to_ship', 'shipped', 'received', 'closed', 'cancelled'], true)
+                && ($event->after_data['status'] ?? null) !== ($event->before_data['status'] ?? null)
+                && !(($event->after_data['status'] ?? null) === 'cancelled' && ($event->before_data['status'] ?? null) === 'draft'))
+            ->take(200)->values();
     }
 
     public function pendingTransfers(): Collection
     {
         return Transfer::query()->join('branches as f', 'f.id', '=', 'transfers.from_branch')
             ->join('branches as t', 't.id', '=', 'transfers.to_branch')->where('transfers.status', 'pending')
-            ->select('transfers.transfer_no', 'f.name as from_name', 't.name as to_name')
+            ->select('transfers.transfer_no', 'transfers.created_at', 'f.name as from_name', 't.name as to_name')
+            ->addSelect(['notice_updated_at' => $this->lastChange('transfers')])
             ->orderByDesc('transfers.id')->limit(50)->get();
     }
 
@@ -112,7 +119,14 @@ class NotificationRepository
                 fn ($query) => $query->where('destination.code', 'CENTRAL'),
                 fn ($query) => $query->where('transfers.to_branch', $location),
             )
-            ->select('transfers.transfer_no', 'b.name as from_name')->orderByDesc('transfers.id')->limit(50)->get();
+            ->select('transfers.transfer_no', 'transfers.created_at', 'b.name as from_name')
+            ->addSelect(['notice_updated_at' => $this->lastChange('transfers')])->orderByDesc('transfers.id')->limit(50)->get();
+    }
+
+    private function lastChange(string $table): Builder
+    {
+        return AuditLog::query()->selectRaw('MAX(audit_logs.created_at)')->where('audit_logs.entity', $table)
+            ->whereColumn('audit_logs.entity_id', $table.'.id');
     }
 
     public function readKeys(int $userId, array $keys): array

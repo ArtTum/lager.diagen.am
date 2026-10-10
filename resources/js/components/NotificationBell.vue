@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/services/api';
 import { currentUser } from '@/router';
-import { emptyNotificationSnapshot, isCurrentNotificationSnapshot } from '@/notifications';
+import { emptyNotificationSnapshot, isCurrentNotificationSnapshot, notificationScope } from '@/notifications';
 import { createNotificationAudio } from '@/notificationAudio';
 import { useLiveRefresh } from '@/composables/useLiveRefresh';
 
@@ -12,6 +12,7 @@ const items = ref([]); const unread = ref(0); const open = ref(false);
 const soundEnabled = ref(localStorage.getItem('lagerNotificationSound') === 'on');
 let previousKeys = null;
 const loading = ref(false);
+const error = ref('');
 const markingKeys = new Set();
 let sessionVersion = 0;
 let requestVersion = 0;
@@ -21,7 +22,9 @@ const notificationAudio = createNotificationAudio(
 );
 const permitted = () => Boolean(user.value?.permissions?.['notifications.view']);
 const onUserChange = (event) => {
+  const sameScope = notificationScope(user.value) === notificationScope(event.detail);
   user.value = event.detail;
+  if (sameScope) { refreshLive(); return; }
   sessionVersion += 1;
   requestVersion += 1;
   loading.value = false;
@@ -31,10 +34,11 @@ const onUserChange = (event) => {
   previousKeys = empty.previousKeys;
   items.value = empty.items;
   unread.value = empty.unread;
+  error.value = '';
   refresh(false);
 };
 const onSoundChange = (event) => { soundEnabled.value = Boolean(event.detail); };
-useLiveRefresh(() => refresh(), { isBusy: loading, fallbackInterval: 45000 });
+const { refresh: refreshLive } = useLiveRefresh(() => refresh(), { isBusy: loading, fallbackInterval: 45000 });
 
 async function refresh(announce = true) {
   if (!permitted()) {
@@ -55,7 +59,8 @@ async function refresh(announce = true) {
     const keys = new Set(nextItems.filter((item) => !item.read).map((item) => item.key));
     if (announce && previousKeys !== null && [...keys].some((key) => !previousKeys.has(key)) && soundEnabled.value) playTone();
     previousKeys = keys; items.value = nextItems; unread.value = nextUnread;
-  } catch { /* Keep the shell usable if notification fetching is temporarily unavailable. */ }
+    error.value = '';
+  } catch { if (isCurrentNotificationSnapshot(snapshot, sessionVersion, requestVersion, permitted())) error.value = 'Ծանուցումները չհաջողվեց թարմացնել։'; }
   finally { if (currentSession === sessionVersion && currentRequest === requestVersion) loading.value = false; }
 }
 
@@ -73,6 +78,7 @@ function toggleSound() {
 function togglePopover() {
   open.value = !open.value;
   activateAudio();
+  if (open.value && (error.value || previousKeys === null)) refreshLive();
 }
 
 async function openItem(item) {
@@ -97,6 +103,8 @@ async function openItem(item) {
 onMounted(() => {
   window.addEventListener('lager:user', onUserChange);
   window.addEventListener('lager:notification-sound', onSoundChange);
+  window.addEventListener('pointerdown', activateAudio);
+  window.addEventListener('keydown', activateAudio);
   refresh(false);
 });
 onBeforeUnmount(() => {
@@ -104,6 +112,8 @@ onBeforeUnmount(() => {
   requestVersion += 1;
   window.removeEventListener('lager:user', onUserChange);
   window.removeEventListener('lager:notification-sound', onSoundChange);
+  window.removeEventListener('pointerdown', activateAudio);
+  window.removeEventListener('keydown', activateAudio);
   void notificationAudio.close();
 });
 </script>
@@ -113,7 +123,8 @@ onBeforeUnmount(() => {
     <button class="topbar-icon-button notification-bell-trigger" type="button" aria-label="Ծանուցումներ" :aria-expanded="open" @click="togglePopover"><AppIcon name="bell" /><b v-if="unread" class="notification-badge">{{ unread > 99 ? '99+' : unread }}</b></button>
     <section v-if="open" class="notification-popover" aria-label="Ծանուցումներ">
       <header class="notification-popover-head"><div><strong>Ծանուցումներ</strong><small>{{ unread }} չկարդացված</small></div><div class="notification-popover-tools"><button type="button" class="sound-mini-toggle" :aria-pressed="soundEnabled" :title="soundEnabled ? 'Անջատել ձայնը' : 'Միացնել ձայնը'" @click="toggleSound"><AppIcon :name="soundEnabled ? 'volumeOn' : 'volumeOff'" /></button><RouterLink to="/notifications" @click="open=false">Բոլորը</RouterLink></div></header>
-      <div v-if="!items.length" class="notification-popover-empty">Նոր ծանուցումներ չկան։</div>
+      <button v-if="error" type="button" class="notification-popover-empty" role="alert" @click="refreshLive">{{ error }} Կրկին փորձել</button>
+      <div v-else-if="!items.length" class="notification-popover-empty">{{ loading ? 'Թարմացվում է…' : 'Նոր ծանուցումներ չկան։' }}</div>
       <button v-for="item in items.slice(0,8)" :key="item.key" type="button" class="notification-popover-item" :class="{ 'is-read': item.read }" @click="openItem(item)"><span class="notification-popover-dot" :class="`tone-${item.tone}`"></span><span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span><i v-if="!item.read"></i></button>
     </section>
   </div>

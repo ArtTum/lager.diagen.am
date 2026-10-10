@@ -5,7 +5,7 @@ import api from '@/services/api';
 import { currentUser } from '@/router';
 import { useLiveRefresh } from '@/composables/useLiveRefresh';
 import { createNotificationAudio } from '@/notificationAudio';
-import { isCurrentNotificationSnapshot } from '@/notifications';
+import { isCurrentNotificationSnapshot, notificationScope } from '@/notifications';
 
 const route = useRoute(); const router = useRouter();
 const items = ref([]); const unread = ref(0); const loading = ref(false); const error = ref('');
@@ -19,9 +19,11 @@ const permitted = () => Boolean(user.value?.permissions?.['notifications.view'])
 const notificationAudio = createNotificationAudio(() => window.AudioContext || window.webkitAudioContext, () => soundEnabled.value);
 const onSoundChange = (event) => { soundEnabled.value = Boolean(event.detail); };
 const visibleItems = computed(() => filter.value === 'all' ? items.value : items.value.filter(item => !item.read));
-const { connected } = useLiveRefresh(refresh, { isBusy: loading, fallbackInterval: 45000 });
+const { connected, refresh: refreshLive } = useLiveRefresh(refresh, { isBusy: loading, fallbackInterval: 45000 });
 const onUserChange = (event) => {
+  const sameScope = notificationScope(user.value) === notificationScope(event.detail);
   user.value = event.detail;
+  if (sameScope) { refreshLive(); return; }
   sessionVersion += 1;
   requestVersion += 1;
   items.value = []; unread.value = 0; error.value = ''; loading.value = false;

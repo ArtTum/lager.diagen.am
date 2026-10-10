@@ -572,6 +572,74 @@ test('a session change discards the old notification poll and establishes a sile
     } finally { view.unmount(); environment.restore(); }
 });
 
+test('ordinary app interaction unlocks enabled notification audio before a socket alert arrives', async () => {
+    const environment = notificationEnvironment();
+    let feed = [notificationItem('existing')];
+    const view = await mountNotificationBell({ async get() { return notificationResponse(feed); } });
+    try {
+        await settle();
+        document.body.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+        await settle();
+        assert.equal(environment.audio.resumed, 1);
+        assert.equal(environment.audio.started, 0);
+        realtimeStatus(true);
+        feed.push(notificationItem('new-request'));
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        assert.equal(environment.audio.started, 1);
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '2');
+    } finally { view.unmount(); environment.restore(); }
+});
+
+test('a same-account profile refresh preserves the open bell and announces an in-flight new alert once', async () => {
+    const environment = notificationEnvironment();
+    const pending = deferred();
+    let calls = 0;
+    let feed = [notificationItem('existing')];
+    const view = await mountNotificationBell({ get() { return ++calls === 2 ? pending.promise : Promise.resolve(notificationResponse(feed)); } });
+    try {
+        await settle();
+        view.root.querySelector('.notification-bell-trigger').click(); await settle();
+        window.dispatchEvent(new CustomEvent('lager:data-changed')); await settle();
+        window.dispatchEvent(new CustomEvent('lager:user', { detail: { id: 1, name: 'Updated name', permissions: { 'notifications.view': true } } }));
+        await settle();
+        assert.ok(view.root.querySelector('.notification-popover'));
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '1');
+        feed.push(notificationItem('new-in-flight'));
+        pending.resolve(notificationResponse(feed)); await settle(); await settle();
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '2');
+        assert.equal(environment.audio.started, 1);
+    } finally { view.unmount(); environment.restore(); }
+});
+
+test('returning to a connected tab recovers notifications missed while the browser was inactive', async () => {
+    const environment = notificationEnvironment('off');
+    let feed = [];
+    let calls = 0;
+    const view = await mountNotificationBell({ async get() { calls++; return notificationResponse(feed); } });
+    try {
+        await settle(); realtimeStatus(true); await settle();
+        assert.equal(environment.intervals.size, 0);
+        feed = [notificationItem('missed-while-inactive')];
+        window.dispatchEvent(new window.Event('focus')); await settle();
+        assert.equal(calls, 2);
+        assert.equal(view.root.querySelector('.notification-badge').textContent, '1');
+    } finally { view.unmount(); environment.restore(); }
+});
+
+test('the bell reports failed refreshes and retries instead of showing an empty successful feed', async () => {
+    const environment = notificationEnvironment('off');
+    let failing = true;
+    const view = await mountNotificationBell({ async get() { if (failing) throw new Error('offline'); return notificationResponse([notificationItem('recovered')]); } });
+    try {
+        await settle(); view.root.querySelector('.notification-bell-trigger').click(); await settle();
+        assert.match(view.root.querySelector('[role="alert"]').textContent, /Կրկին փորձել/);
+        assert.doesNotMatch(view.root.textContent, /Նոր ծանուցումներ չկան/);
+        failing = false; view.root.querySelector('[role="alert"]').click(); await settle();
+        assert.equal(view.root.querySelector('[role="alert"]'), null);
+        assert.match(view.root.textContent, /recovered/);
+    } finally { view.unmount(); environment.restore(); }
+});
+
 async function mountNotificationsPage(api) {
     const Page = component('views/notifications/Index.vue', {
         '@/services/api': api,

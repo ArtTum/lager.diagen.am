@@ -29,7 +29,7 @@ class StockRequestWorkflowApiTest extends TestCase
     protected function tearDown(): void
     {
         foreach ([
-            'audit_logs', 'movement_corrections', 'movements', 'transfer_items', 'transfers', 'request_items',
+            'user_notification_reads', 'audit_logs', 'movement_corrections', 'movements', 'transfer_items', 'transfers', 'request_items',
             'stock_requests', 'stock_lots', 'products', 'role_permissions', 'permissions',
             'roles', 'branches', 'users',
         ] as $table) {
@@ -70,9 +70,9 @@ class StockRequestWorkflowApiTest extends TestCase
             'unit_cost' => 100,
             'qty' => 4,
         ]);
-        $branchActor = $this->user($branch, 'branch', 10, ['requests.create', 'requests.edit', 'requests.view']);
+        $branchActor = $this->user($branch, 'branch', 10, ['requests.create', 'requests.edit', 'requests.view', 'notifications.view']);
         $centralActor = $this->user($central, 'admin', 20, ['requests.approve', 'requests.edit', 'requests.view']);
-        $centralWorker = $this->user($central, 'storekeeper', 21, ['requests.edit', 'requests.view']);
+        $centralWorker = $this->user($central, 'storekeeper', 21, ['requests.edit', 'requests.view', 'notifications.view']);
 
         $this->actingAs($branchActor, 'sanctum');
         $create = $this->postJson('/api/requests', [
@@ -87,6 +87,7 @@ class StockRequestWorkflowApiTest extends TestCase
         $itemId = (int) StockRequestItem::query()->where('request_id', $requestId)->value('id');
 
         $this->actingAs($centralWorker, 'sanctum');
+        $this->getJson('/api/notifications')->assertOk()->assertJsonPath('data.0.title', 'Նոր մասնաճյուղային պահանջագիր');
         $this->postJson("/api/requests/{$requestId}/cancel")->assertForbidden();
         self::assertSame('sent', StockRequest::query()->findOrFail($requestId)->status);
 
@@ -118,6 +119,9 @@ class StockRequestWorkflowApiTest extends TestCase
         self::assertSame('shipped', StockRequest::query()->findOrFail($requestId)->status);
 
         $this->actingAs($branchActor, 'sanctum');
+        $notices = $this->getJson('/api/notifications')->assertOk()->assertJsonCount(5, 'data')->json('data');
+        self::assertContains('Պահանջագիրը հաստատվել է', array_column($notices, 'title'));
+        self::assertContains('Պահանջագիրն ուղարկվել է', array_column($notices, 'title'));
         $this->postJson("/api/requests/{$requestId}/receive")->assertOk();
 
         $this->actingAs($centralWorker, 'sanctum');
@@ -132,6 +136,8 @@ class StockRequestWorkflowApiTest extends TestCase
         self::assertSame(2, StockLot::query()->count(), 'Receipt should merge into the matching branch LOT instead of inserting a duplicate.');
         self::assertSame(['branch_out', 'branch_in'], Movement::query()->orderBy('id')->pluck('type')->all());
         self::assertSame(8, AuditLog::query()->count());
+        $this->actingAs($centralWorker, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonCount(8, 'data')->assertJsonPath('data.0.title', 'Պահանջագիրը փակվել է');
     }
 
     public function test_central_warehouse_cannot_be_the_destination_of_a_branch_request(): void
@@ -656,6 +662,10 @@ class StockRequestWorkflowApiTest extends TestCase
             $table->json('after_data')->nullable();
             $table->string('ip_address')->nullable();
             $table->dateTime('created_at')->nullable();
+        });
+        Schema::create('user_notification_reads', function (Blueprint $table): void {
+            $table->unsignedBigInteger('user_id'); $table->char('notice_key', 40); $table->timestamp('read_at');
+            $table->primary(['user_id', 'notice_key']);
         });
     }
 }

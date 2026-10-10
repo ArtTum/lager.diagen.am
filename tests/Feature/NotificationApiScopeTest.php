@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\AuditLog;
 use App\Models\Permission;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\StockLot;
+use App\Models\StockRequest;
 use App\Models\Transfer;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
@@ -23,7 +25,7 @@ class NotificationApiScopeTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['user_notification_reads', 'transfers', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
+        foreach (['audit_logs', 'stock_requests', 'user_notification_reads', 'transfers', 'stock_lots', 'products', 'role_permissions', 'permissions', 'users', 'roles', 'branches'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -137,6 +139,71 @@ class NotificationApiScopeTest extends TestCase
         ]);
     }
 
+    public function test_request_notifications_flow_both_ways_keep_every_transition_and_scope_read_state(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $erebuni = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $other = Branch::query()->create(['name' => 'Gyumri', 'code' => 'GYUM', 'active' => true]);
+        $permissions = ['notifications.view', 'requests.view'];
+        $centralActor = $this->user($central, 'central-actor@example.test', $permissions, 'central-actor');
+        $storekeeper = $this->user($central, 'storekeeper@example.test', $permissions, 'storekeeper');
+        $branchActor = $this->user($erebuni, 'branch-actor@example.test', $permissions, 'branch');
+        $branchColleague = $this->user($erebuni, 'colleague@example.test', $permissions, 'branch');
+        $otherActor = $this->user($other, 'other@example.test', $permissions, 'branch');
+        $request = StockRequest::query()->create(['request_no' => 'EREB-CLOSED', 'branch_id' => $erebuni->id, 'requested_by' => $branchActor->id, 'status' => 'closed', 'created_at' => now()]);
+        $previous = 'draft';
+        $statuses = ['sent', 'review', 'approved', 'collecting', 'ready_to_ship', 'shipped', 'received', 'closed'];
+        foreach ($statuses as $i => $status) {
+            AuditLog::query()->create(['actor_id' => in_array($status, ['sent', 'received', 'closed'], true) ? $branchActor->id : $centralActor->id,
+                'entity' => 'stock_requests', 'entity_id' => $request->id, 'before_data' => ['status' => $previous],
+                'after_data' => ['status' => $status], 'created_at' => now()->subMinutes(10 - $i)]);
+            $previous = $status;
+        }
+        $centralFeed = $this->actingAs($storekeeper, 'sanctum')->getJson('/api/notifications')->assertOk();
+        $centralFeed->assertJsonCount(8, 'data')->assertJsonPath('data.0.title', 'Պահանջագիրը փակվել է');
+        self::assertContains('Պահանջագրի ստացումը հաստատվել է', array_column($centralFeed->json('data'), 'title'));
+        $branchFeed = $this->actingAs($branchActor, 'sanctum')->getJson('/api/notifications')->assertOk();
+        $branchFeed->assertJsonCount(5, 'data')->assertJsonPath('data.0.title', 'Պահանջագիրն ուղարկվել է');
+        $approval = collect($branchFeed->json('data'))->firstWhere('title', 'Պահանջագիրը հաստատվել է');
+        self::assertNotNull($approval, 'A later closed state must not erase approval history.');
+        $this->postJson('/api/notifications/read', ['key' => $approval['key']])->assertOk();
+        $this->getJson('/api/notifications')->assertOk()->assertJsonPath('unread_count', 4);
+        $this->actingAs($branchColleague, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonPath('unread_count', 8);
+        $this->actingAs($otherActor, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonCount(0, 'data');
+        $this->postJson('/api/notifications/read', ['key' => $approval['key']])->assertUnprocessable();
+
+        // A central-created request must notify its destination branch.
+        $fromCentral = StockRequest::query()->create(['request_no' => 'CENTRAL-TO-EREB', 'branch_id' => $erebuni->id, 'requested_by' => $centralActor->id, 'status' => 'sent', 'created_at' => now()]);
+        AuditLog::query()->create(['actor_id' => $centralActor->id, 'entity' => 'stock_requests', 'entity_id' => $fromCentral->id,
+            'after_data' => ['status' => 'sent'], 'created_at' => now()]);
+        $this->actingAs($branchActor, 'sanctum')->getJson('/api/notifications')->assertOk()
+            ->assertJsonPath('data.0.title', 'Նոր պահանջագիր Ձեր մասնաճյուղի համար')
+            ->assertJsonPath('data.0.detail', 'CENTRAL-TO-EREB · Erebuni · Սպասում է ստուգման');
+        $this->actingAs($storekeeper, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonCount(9, 'data');
+
+        // Draft saves/edits, cancelled drafts and expired event history are silent.
+        $draft = StockRequest::query()->create(['request_no' => 'PRIVATE-DRAFT', 'branch_id' => $erebuni->id, 'status' => 'cancelled', 'created_at' => now()]);
+        foreach ([[null, 'draft', now()], ['draft', 'draft', now()], ['draft', 'cancelled', now()], ['review', 'rejected', now()->subDays(8)]] as [$before, $after, $when]) {
+            AuditLog::query()->create(['actor_id' => $centralActor->id, 'entity' => 'stock_requests', 'entity_id' => $draft->id,
+                'before_data' => $before ? ['status' => $before] : null, 'after_data' => ['status' => $after], 'created_at' => $when]);
+        }
+        $this->actingAs($branchActor, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonCount(6, 'data');
+    }
+
+    public function test_read_sent_event_stays_read_when_it_ages_into_an_active_reminder(): void
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $branch = Branch::query()->create(['name' => 'Erebuni', 'code' => 'EREB', 'active' => true]);
+        $viewer = $this->user($central, 'aging-viewer@example.test', ['notifications.view', 'requests.view'], 'viewer');
+        $request = StockRequest::query()->create(['request_no' => 'AGING-SENT', 'branch_id' => $branch->id, 'status' => 'sent', 'created_at' => now()->subDays(6)]);
+        $event = AuditLog::query()->create(['actor_id' => null, 'entity' => 'stock_requests', 'entity_id' => $request->id,
+            'after_data' => ['status' => 'sent'], 'created_at' => now()->subDays(6)]);
+        $feed = $this->actingAs($viewer, 'sanctum')->getJson('/api/notifications')->assertOk()->assertJsonCount(1, 'data');
+        $this->postJson('/api/notifications/read', ['key' => $feed->json('data.0.key')])->assertOk();
+        $event->update(['created_at' => now()->subDays(8)]);
+        $this->getJson('/api/notifications')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('unread_count', 0);
+    }
+
     private function lot(Product $product, int $locationId, float $qty): StockLot
     {
         return StockLot::query()->create([
@@ -230,6 +297,18 @@ class NotificationApiScopeTest extends TestCase
             $table->unsignedBigInteger('from_branch');
             $table->unsignedBigInteger('to_branch');
             $table->string('status');
+            $table->dateTime('created_at')->nullable();
+        });
+        Schema::create('stock_requests', function (Blueprint $table): void {
+            $table->id(); $table->string('request_no'); $table->unsignedBigInteger('branch_id');
+            $table->unsignedBigInteger('requested_by')->nullable(); $table->string('status');
+            $table->text('rejection_reason')->nullable(); $table->dateTime('created_at'); $table->dateTime('sent_at')->nullable();
+        });
+        Schema::create('audit_logs', function (Blueprint $table): void {
+            $table->id(); $table->unsignedBigInteger('actor_id')->nullable(); $table->string('action')->nullable();
+            $table->string('entity'); $table->unsignedBigInteger('entity_id')->nullable();
+            $table->json('before_data')->nullable(); $table->json('after_data')->nullable();
+            $table->string('ip_address')->nullable(); $table->dateTime('created_at');
         });
     }
 }

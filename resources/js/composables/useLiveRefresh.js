@@ -51,12 +51,16 @@ export function useLiveRefresh(callback, { isBusy = false, fallbackInterval = 0 
         if (fallbackInterval && !connected.value) timer = window.setInterval(refresh, fallbackInterval);
     }
 
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+
     watch(busy, (value) => { if (!value && pending) refresh(); });
     onMounted(() => {
         mounted = true;
         window.addEventListener('lager:data-changed', refresh);
         window.addEventListener('lager:realtime-status', updateStatus);
         window.addEventListener('lager:user', resetSession);
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', onVisible);
         updateStatus();
     });
     onBeforeUnmount(() => {
@@ -67,6 +71,8 @@ export function useLiveRefresh(callback, { isBusy = false, fallbackInterval = 0 
         window.removeEventListener('lager:data-changed', refresh);
         window.removeEventListener('lager:realtime-status', updateStatus);
         window.removeEventListener('lager:user', resetSession);
+        window.removeEventListener('focus', refresh);
+        document.removeEventListener('visibilitychange', onVisible);
     });
     return { refresh, connected, status };
 }

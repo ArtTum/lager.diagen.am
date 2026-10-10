@@ -7,3 +7,8 @@ export function isCurrentNotificationSnapshot(snapshot, sessionVersion, requestV
         && snapshot.sessionVersion === sessionVersion
         && snapshot.requestVersion === requestVersion;
 }
+
+export function notificationScope(user) {
+    return JSON.stringify([user?.id, user?.branch_id, user?.branch?.code,
+        Object.entries(user?.permissions || {}).sort(([a], [b]) => a.localeCompare(b))]);
+}

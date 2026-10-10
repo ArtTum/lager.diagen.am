@@ -18,6 +18,9 @@ class NotificationRepositoryTest extends TestCase
             $table->unsignedBigInteger('id')->primary();
             $table->string('name');
         });
+        Schema::create('audit_logs', static function (Blueprint $table): void {
+            $table->id(); $table->string('entity'); $table->unsignedBigInteger('entity_id'); $table->dateTime('created_at');
+        });
         Schema::create('inventory_sessions', static function (Blueprint $table): void {
             $table->unsignedBigInteger('id')->primary();
             $table->string('inventory_no');
@@ -53,6 +56,7 @@ class NotificationRepositoryTest extends TestCase
     protected function tearDown(): void
     {
         Schema::dropIfExists('inventory_sessions');
+        Schema::dropIfExists('audit_logs');
         Schema::dropIfExists('stock_lots');
         Schema::dropIfExists('suppliers');
         Schema::dropIfExists('products');

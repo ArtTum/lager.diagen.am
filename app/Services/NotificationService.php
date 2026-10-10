@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\User;
 use App\Repositories\NotificationRepository;
 use App\Support\WorkflowStatus;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 class NotificationService
@@ -13,11 +14,19 @@ class NotificationService
 
     public function index(User $actor): array
     {
+        return $this->feed($actor);
+    }
+
+    private function feed(User $actor, bool $keepReadAliases = false): array
+    {
         $location = (int) $actor->currentLocationId();
         $items = [];
-        $add = static function (string $title, string $detail, string $link, string $tone = 'amber', ?string $identity = null) use (&$items): void {
+        $time = static fn ($value): int => $value ? Carbon::parse($value)->getTimestamp() : 0;
+        $add = static function (string $title, string $detail, string $link, string $tone = 'amber', ?string $identity = null, int $occurredAt = 0, array $readAliases = []) use (&$items): void {
             $items[] = ['title' => $title, 'detail' => $detail, 'link' => $link, 'tone' => $tone,
-                'key' => sha1($identity ?? $title.'|'.$detail.'|'.$link)];
+                'key' => sha1($identity ?? $title.'|'.$detail.'|'.$link),
+                '_priority' => in_array($link, ['/stock', '/expiry'], true) ? 0 : 1,
+                '_time' => $occurredAt, '_order' => count($items), '_read_aliases' => $readAliases];
         };
 
         if ($actor->hasPermissionCode('stock.view')) {
@@ -38,47 +47,86 @@ class NotificationService
                 $add($label, "{$row->code} · {$row->name} · LOT {$row->lot_no} · ".($row->branch_name ?? 'Կենտրոնական պահեստ')." · {$row->qty} {$row->unit}", '/expiry', $days < 0 ? 'red' : ($days <= 30 ? 'amber' : 'blue'));
             }
         }
-        if ($actor->hasPermissionCode('requests.view') && ($location > 0 || $actor->hasPermissionCode('requests.approve'))) {
+        if ($actor->hasPermissionCode('requests.view')) {
+            $events = $this->notifications->requestEvents($location, (int) $actor->id);
+            $pendingEvents = []; $shippedEvents = [];
+            foreach ($events as $event) {
+                $status = $event->after_data['status'];
+                if (in_array($status, ['sent', 'review'], true)) $pendingEvents[$event->entity_id] = true;
+                if ($status === 'shipped') $shippedEvents[$event->entity_id] = true;
+                $title = match ($status) {
+                    'sent' => $location > 0 ? 'Նոր պահանջագիր Ձեր մասնաճյուղի համար' : 'Նոր մասնաճյուղային պահանջագիր',
+                    'review' => 'Պահանջագրի ստուգումը սկսվել է',
+                    'approved' => 'Պահանջագիրը հաստատվել է',
+                    'partially_approved' => 'Պահանջագիրը մասնակի է հաստատվել',
+                    'rejected' => 'Պահանջագիրը մերժվել է',
+                    'collecting' => 'Պահանջագրի հավաքումը սկսվել է',
+                    'ready_to_ship' => 'Պահանջագիրը պատրաստ է ուղարկման',
+                    'shipped' => 'Պահանջագիրն ուղարկվել է',
+                    'received' => 'Պահանջագրի ստացումը հաստատվել է',
+                    'closed' => 'Պահանջագիրը փակվել է',
+                    'cancelled' => 'Պահանջագիրը չեղարկվել է',
+                };
+                $reason = $status === 'rejected' ? ($event->after_data['rejection_reason'] ?? $event->rejection_reason) : null;
+                $detail = $event->request_no.' · '.$event->branch_name.' · '.($reason ?: WorkflowStatus::label('requests', $status));
+                $aliases = [];
+                if ($status === 'sent') {
+                    $oldTitle = $location > 0 ? 'Ձեր պահանջագիրը սպասում է ստուգման' : 'Նոր մասնաճյուղային պահանջագիր';
+                    $aliases[] = sha1($oldTitle.'|'.$event->request_no.' · '.$event->branch_name.' · ստուգման սպասող|/requests');
+                } elseif (in_array($status, ['approved', 'partially_approved', 'rejected', 'received'], true)) {
+                    $oldTitle = $status === 'rejected' ? 'Պահանջագիրը մերժվել է' : ($status === 'received' ? 'Պահանջագրի ընթացքը թարմացվել է' : 'Պահանջագիրը հաստատվել է');
+                    $aliases[] = sha1($oldTitle.'|'.$event->request_no.' · '.($reason ?: $status).'|/requests');
+                } elseif ($status === 'shipped') {
+                    $aliases[] = sha1('Սպասվում է ստացման հաստատում|'.$event->request_no.' · ուղարկվել է '.$event->created_at->format('d.m.Y').'|/requests');
+                }
+                $add($title, $detail, '/requests', in_array($status, ['rejected', 'cancelled'], true) ? 'red' : ($status === 'shipped' ? 'violet' : 'blue'),
+                    'stock_requests|event|'.$event->id, $event->created_at->getTimestamp(), $aliases);
+            }
+            // Active reminders also cover requests with old or absent audit
+            // history, including the sender's own waiting requests.
             $title = $location > 0 ? 'Ձեր պահանջագիրը սպասում է ստուգման' : 'Նոր մասնաճյուղային պահանջագիր';
             foreach ($this->notifications->pendingRequests($location) as $row) {
-                $add($title, "{$row->request_no} · {$row->branch_name} · ստուգման սպասող", '/requests', 'blue');
+                if (isset($pendingEvents[$row->id])) continue;
+                $add($title, "{$row->request_no} · {$row->branch_name} · ստուգման սպասող", '/requests', 'blue', null, $time($row->notice_updated_at ?? $row->created_at ?? null));
             }
-        }
-        if ($actor->hasPermissionCode('requests.view')) {
             foreach ($this->notifications->shippedRequests($location) as $row) {
-                $add('Սպասվում է ստացման հաստատում', $row->request_no.' · ուղարկվել է '.optional($row->sent_at)->format('d.m.Y'), '/requests', 'violet');
-            }
-            foreach ($this->notifications->recentlyUpdatedRequests($location) as $row) {
-                // Keep the original identity so wording changes preserve read state and sound deduplication.
-                $legacyTitle = $row->status === 'rejected' ? 'Պահանջագիրը մերժվել է' : (in_array($row->status, ['approved', 'partially_approved'], true) ? 'Պահանջագիրը հաստատվել է' : 'Պահանջագրի ընթացքը թարմացվել է');
-                $legacyDetail = $row->request_no.' · '.($row->rejection_reason ?: $row->status);
-                $title = $row->status === 'partially_approved' ? 'Պահանջագիրը մասնակի է հաստատվել' : $legacyTitle;
-                $detail = $row->request_no.' · '.($row->rejection_reason ?: WorkflowStatus::label('requests', $row->status));
-                $add($title, $detail, '/requests', $row->status === 'rejected' ? 'red' : 'green', $legacyTitle.'|'.$legacyDetail.'|/requests');
+                if (isset($shippedEvents[$row->id])) continue;
+                $add('Սպասվում է ստացման հաստատում', $row->request_no.' · ուղարկվել է '.optional($row->sent_at)->format('d.m.Y'), '/requests', 'violet', null, $time($row->sent_at));
             }
         }
         if ($actor->hasPermissionCode('inventory.view')) {
             foreach ($this->notifications->activeInventories($location, $actor->hasPermissionCode('inventory.approve')) as $row) {
                 $add($row->status === 'counted' ? 'Հաստատման սպասող գույքագրում' : 'Գույքագրումը դեռ բաց է',
-                    $row->inventory_no.' · '.($row->branch_name ?? 'Կենտրոնական պահեստ').' · սկսվել է '.optional($row->started_at)->format('d.m.Y'), '/inventory', $row->status === 'counted' ? 'violet' : 'amber');
+                    $row->inventory_no.' · '.($row->branch_name ?? 'Կենտրոնական պահեստ').' · սկսվել է '.optional($row->started_at)->format('d.m.Y'), '/inventory', $row->status === 'counted' ? 'violet' : 'amber', null, $time($row->notice_updated_at ?? $row->started_at));
             }
         }
         if ($location === 0 && $actor->hasPermissionCode('transfers.view') && $actor->hasPermissionCode('transfers.approve')) {
             foreach ($this->notifications->pendingTransfers() as $row) {
-                $add('Հաստատման սպասող տեղափոխում', "{$row->transfer_no} · {$row->from_name} → {$row->to_name}", '/transfers', 'blue');
+                $add('Հաստատման սպասող տեղափոխում', "{$row->transfer_no} · {$row->from_name} → {$row->to_name}", '/transfers', 'blue', null, $time($row->notice_updated_at ?? $row->created_at ?? null));
             }
         }
         if ($actor->hasPermissionCode('transfers.view')) {
             foreach ($this->notifications->incomingTransfers($location) as $row) {
-                $add('Սպասվում է տեղափոխման ընդունում', $row->transfer_no.' · ուղարկել է '.$row->from_name, '/transfers', 'violet');
+                $add('Սպասվում է տեղափոխման ընդունում', $row->transfer_no.' · ուղարկել է '.$row->from_name, '/transfers', 'violet', null, $time($row->notice_updated_at ?? $row->created_at ?? null));
             }
         }
 
-        $items = array_slice($items, 0, 300);
-        $readKeys = $this->notifications->readKeys((int) $actor->id, array_column($items, 'key'));
+        $keys = array_column($items, 'key');
+        foreach ($items as $item) $keys = array_merge($keys, $item['_read_aliases']);
+        $readKeys = $this->notifications->readKeys((int) $actor->id, array_values(array_unique($keys)));
         $read = array_fill_keys($readKeys, true);
         foreach ($items as &$item) {
-            $item['read'] = isset($read[$item['key']]);
+            $item['read'] = isset($read[$item['key']]) || count(array_intersect($item['_read_aliases'], $readKeys)) > 0;
+        }
+        unset($item);
+        // New actionable work precedes stock/expiry reminders in both the
+        // eight-row bell preview and the bounded full feed.
+        usort($items, static fn (array $a, array $b): int => ($a['read'] <=> $b['read'])
+            ?: ($b['_priority'] <=> $a['_priority']) ?: ($b['_time'] <=> $a['_time']) ?: ($a['_order'] <=> $b['_order']));
+        $items = array_slice($items, 0, 300);
+        foreach ($items as &$item) {
+            unset($item['_priority'], $item['_time'], $item['_order']);
+            if (! $keepReadAliases) unset($item['_read_aliases']);
         }
         unset($item);
 
@@ -87,10 +135,14 @@ class NotificationService
 
     public function markRead(User $actor, string $key): void
     {
-        $notice = collect($this->index($actor)['data'])->firstWhere('key', $key);
+        $notice = collect($this->feed($actor, true)['data'])->first(static fn (array $item): bool => $item['key'] === $key || in_array($key, $item['_read_aliases'], true));
         if (! $notice) {
             throw ValidationException::withMessages(['key' => ['Ծանուցումն այլևս ակտիվ չէ։']]);
         }
-        $this->notifications->markRead((int) $actor->id, $key);
+        // Preserve read state when a seven-day event becomes an active reminder,
+        // and allow an already-open old frontend to submit its legacy key.
+        foreach (array_unique([$notice['key'], ...$notice['_read_aliases']]) as $readKey) {
+            $this->notifications->markRead((int) $actor->id, $readKey);
+        }
     }
 }
