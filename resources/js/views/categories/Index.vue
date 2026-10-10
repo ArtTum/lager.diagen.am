@@ -62,7 +62,6 @@ async function openCreate() {
 }
 
 function closeCreate() {
-    if (saving.value) return;
     modal.value = false;
     formError.value = '';
     createButton.value?.focus();
@@ -156,12 +155,12 @@ useLiveRefresh(load, { isBusy: () => busy.value || saving.value });
             </section>
         </template>
 
-        <div v-if="modal && canView && can('products.create')" class="modal-backdrop" @click.self="closeCreate" @keydown.esc="closeCreate">
+        <div v-if="modal && canView && can('products.create')" class="modal-backdrop" @keydown.esc="closeCreate">
             <form class="modal-card category-form" role="dialog" aria-modal="true" aria-labelledby="category-create-title" @submit.prevent="save">
-                <header class="modal-header"><div><p class="eyebrow">ԱՊՐԱՆՔԻ ՏԵՍԱԿ</p><h2 id="category-create-title">Ավելացնել տեսակ</h2><p class="muted">Անվանումը հասանելի կլինի ապրանքի քարտի ընտրացանկում։</p></div><button type="button" class="icon-button close-button" aria-label="Փակել" :disabled="saving" @click="closeCreate"><AppIcon name="xmark" /></button></header>
+                <header class="modal-header"><div><p class="eyebrow">ԱՊՐԱՆՔԻ ՏԵՍԱԿ</p><h2 id="category-create-title">Ավելացնել տեսակ</h2><p class="muted">Անվանումը հասանելի կլինի ապրանքի քարտի ընտրացանկում։</p></div><button type="button" class="icon-button close-button" aria-label="Փակել" @click="closeCreate"><AppIcon name="xmark" /></button></header>
                 <div class="category-form-fields"><label class="form-field">Տեսակի անվանում *<input ref="nameInput" v-model.trim="form.name" class="form-control" maxlength="120" required :disabled="saving" placeholder="Օրինակ՝ Լաբորատոր նյութեր"></label><label class="form-field">Հիմնական տեսակ (ընտրովի)<select v-searchable-select v-model="form.parent_id" class="form-control" :disabled="saving"><option value="">Առանց հիմնական տեսակի</option><option v-for="category in categories || []" :key="category.id" :value="category.id">{{ category.name }}</option></select></label></div>
                 <p v-if="formError" class="form-error" role="alert">{{ formError }}</p>
-                <div class="modal-actions"><button type="button" class="secondary-button" :disabled="saving" @click="closeCreate">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Ավելացվում է…' : 'Ավելացնել տեսակ' }}</button></div>
+                <div class="modal-actions"><button type="button" class="secondary-button" @click="closeCreate">Չեղարկել</button><button class="primary-button" :disabled="saving">{{ saving ? 'Ավելացվում է…' : 'Ավելացնել տեսակ' }}</button></div>
             </form>
         </div>
         <DestructiveConfirmDialog v-if="confirmCategory && canView && can('products.delete')" title="Ջնջե՞լ ապրանքի տեսակը" :entity="confirmCategory.name" :description="`«${confirmCategory.name}» տեսակը ընդմիշտ կհեռացվի։ Գործողությունը հնարավոր չէ հետ բերել։`" confirm-label="Ջնջել տեսակը" :busy-label="saving ? 'Ջնջվում է…' : 'Թարմացվում է…'" :busy="saving || busy" :error="confirmError" @cancel="confirmCategory = null" @confirm="remove" />

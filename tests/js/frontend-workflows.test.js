@@ -245,6 +245,32 @@ test('product viewers can reach product types from the sidebar without a separat
     } finally { view.unmount(); }
 });
 
+test('account details stay open on outside clicks and close from their explicit controls', async () => {
+    const user = { id: 7, name: 'User', permissions: { 'products.view': true } };
+    const App = component('App.vue', {
+        '@/services/api': {}, '@/router': { currentUser: () => user, refreshCurrentUser: async () => null },
+        '@/router/access': { userContextChanged }, '@/components/NotificationBell.vue': stub,
+    });
+    const router = VueRouter.createRouter({ history: VueRouter.createMemoryHistory(), routes: [
+        { path: '/products', component: stub }, { path: '/no-access', component: stub },
+    ] });
+    await router.push('/products');
+    const view = mount(App, { router });
+    try {
+        for (const dismiss of ['x', 'close']) {
+            view.root.querySelector('.profile-trigger').click(); await settle();
+            view.root.querySelector('.profile-menu-item').click(); await settle();
+            const backdrop = view.root.querySelector('.profile-details-backdrop');
+            assert.ok(backdrop);
+            backdrop.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+            backdrop.click(); await settle();
+            assert.equal(view.root.querySelector('.profile-details-backdrop'), backdrop);
+            backdrop.querySelector(dismiss === 'x' ? '.close-button' : '.modal-actions button').click(); await settle();
+            assert.equal(view.root.querySelector('.profile-details-backdrop'), null, dismiss);
+        }
+    } finally { view.unmount(); }
+});
+
 async function purchasingShell(api, user, path) {
     const context = { currentUser: () => user, refreshCurrentUser: async () => null };
     const Purchasing = component('views/purchasing/Index.vue', {

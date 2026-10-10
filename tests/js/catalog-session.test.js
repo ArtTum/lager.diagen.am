@@ -285,6 +285,28 @@ test('a previous account delete completion leaves the new account confirmation b
     } finally { view.unmount(); }
 });
 
+for (const dismiss of ['cancel', 'x']) {
+    test(`catalog ${dismiss} closes immediately while a save is pending and ignores its late failure`, async () => {
+        const pending = deferred(); let writes = 0;
+        const view = await mountCatalog('branches', {
+            get: async () => list(), post() { writes += 1; return pending.promise; },
+        });
+        try {
+            await settle(); create(view); await settle(); submit(draft(view)); await settle();
+            const button = draft(view).querySelector(dismiss === 'x' ? '.close-button' : '.modal-actions .secondary-button');
+            assert.equal(button.disabled, false);
+            button.click(); await settle();
+            assert.equal(draft(view), null);
+            create(view); await settle();
+            assert.equal(draft(view), null, 'a pending save cannot be submitted twice');
+            pending.reject({ response: { data: { message: 'Late dismissed save error' } } }); await settle();
+            assert.equal(draft(view), null);
+            assert.doesNotMatch(view.root.textContent, /Late dismissed save error/);
+            assert.equal(writes, 1);
+        } finally { view.unmount(); }
+    });
+}
+
 test('unmount cancels pending catalog opener follow-ups and mutation refreshes', async () => {
     const optionsLoad = deferred(); const getCalls = [];
     const first = await mountCatalog('users', { get(endpoint) { getCalls.push(endpoint); return endpoint.startsWith('pages/') ? Promise.resolve(list()) : optionsLoad.promise; } });

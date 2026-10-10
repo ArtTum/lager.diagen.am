@@ -89,6 +89,107 @@ function mount(definition, router) {
     return { root, unmount() { app.unmount(); root.remove(); } };
 }
 
+test('all creation forms close from cancel and X without submitting incomplete fields', async () => {
+    for (const module of ['products', 'branches', 'users', 'roles', 'categories', 'suppliers', 'transfers', 'returns', 'purchases', 'receipts', 'requests', 'inventory', 'stock']) {
+        for (const dismiss of ['cancel', 'x']) {
+            const user = { id: 7, location_id: 0, branch: { id: 2 }, role: { name: 'admin' }, permissions: Object.fromEntries(
+                ['products', 'branches', 'users', 'roles', 'suppliers', 'transfers', 'returns', 'purchases', 'receipts', 'requests', 'inventory', 'stock'].flatMap((kind) => ['view', 'create', 'edit', 'approve'].map((action) => [`${kind}.${action}`, true])),
+            ) };
+            const catalog = ['products', 'branches', 'users', 'roles'].includes(module);
+            const api = {
+                async get(endpoint) {
+                    if (endpoint === 'categories') return { data: { data: [] } };
+                    if (endpoint === 'suppliers') return { data: { data: [], total: 0 } };
+                    if (endpoint.startsWith('pages/') || ['inventory', 'returns'].includes(endpoint)) return list(module === 'stock' ? [{ id: 1, name: 'Stock item', code: 'STOCK', unit: 'pcs' }] : [], undefined, { locations: [{ id: 0, name: 'Central' }] });
+                    return { data: { data: { branches: [{ id: 2, name: 'Branch' }], products: [], suppliers: [], categories: [], roles: [], permissions: [], orders: [] } } };
+                },
+                async post() { assert.fail(`${module} dismiss must not submit a form`); },
+            };
+            const view = await mountView(catalog ? 'views/CatalogTable.vue' : `views/${['purchases', 'receipts'].includes(module) ? 'purchasing' : module}/Index.vue`, `/${module}`, api, user);
+            try {
+                await settle();
+                view.root.querySelector(module === 'stock' ? 'tbody [title="Գրանցել ելք"]' : '.page-heading .primary-button').click(); await settle();
+                const form = view.root.querySelector('form.modal-card');
+                assert.ok(form, `${module} opened`);
+                const backdrop = view.root.querySelector('.modal-backdrop');
+                backdrop.click(); await settle();
+                assert.equal(view.root.querySelector('form.modal-card'), form, `${module} ignores accidental outside clicks`);
+                const button = form.querySelector(dismiss === 'x' ? '.close-button' : '.modal-actions .secondary-button');
+                assert.ok(button, `${module} ${dismiss}`);
+                assert.equal(button.type, 'button', `${module} ${dismiss} must skip native form validation`);
+                button.click(); await settle();
+                assert.equal(view.root.querySelector('.modal-backdrop'), null, `${module} ${dismiss} closed`);
+            } finally { view.unmount(); }
+        }
+    }
+});
+
+test('all workflow confirmations close from cancel and X including the underlying inventory inspection', async () => {
+    for (const module of ['transfers', 'purchases', 'requests', 'inventory', 'movements']) {
+        for (const dismiss of ['cancel', 'x']) {
+            const row = module === 'inventory' ? { ...inventorySnapshot(), lines_count: 1, counted_lines_count: 1 }
+                : { id: 1, transfer_no: 'TRANSFER', order_no: 'ORDER', request_no: 'REQUEST', status: module === 'requests' ? 'approved' : 'pending', branch_id: 2, requested_by: 7,
+                    movement_no: 'MOVEMENT', type: 'consumption', from_location: 0, to_location: null, qty: 1 };
+            const view = await mountView(`views/${module === 'purchases' ? 'purchasing' : module}/Index.vue`, `/${module}`, {
+                async get(endpoint) { return endpoint === 'inventory/1' ? { data: { data: { session: inventorySnapshot() } } } : list([row]); },
+                async post() { assert.fail(`${module} dismiss must not confirm a mutation`); },
+            }, { id: 7, location_id: 0, role: { name: 'admin' }, permissions: { [`${module}.view`]: true, [`${module}.approve`]: true, [`${module}.edit`]: true } });
+            try {
+                await settle(); view.root.querySelector(module === 'inventory' ? 'tbody .primary-button' : 'tbody button').click(); await settle();
+                if (module === 'inventory') { view.root.querySelector('.inventory-inspection-modal .primary-button').click(); await settle(); }
+                const dialog = view.root.querySelector('.confirm-card');
+                assert.ok(dialog, `${module} confirmation opened`);
+                view.root.querySelector('.modal-backdrop').click(); await settle();
+                assert.equal(view.root.querySelector('.confirm-card'), dialog, `${module} ignores accidental outside clicks`);
+                dialog.querySelector(dismiss === 'x' ? '.close-button' : '.modal-actions .secondary-button').click(); await settle();
+                assert.equal(view.root.querySelector('.modal-backdrop'), null, `${module} ${dismiss} closed all dialogs`);
+            } finally { view.unmount(); }
+        }
+    }
+});
+
+test('destructive confirmations can be dismissed while busy without firing their confirm action', async () => {
+    const Dialog = component('components/DestructiveConfirmDialog.vue', { '@/components/AppIcon.vue': stub });
+    for (const dismiss of ['cancel', 'x', 'escape']) {
+        const visible = Vue.ref(true);
+        const view = mount({ setup: () => () => visible.value ? Vue.h(Dialog, {
+            title: 'Confirm', description: 'Operation pending', busy: true,
+            onCancel: () => { visible.value = false; }, onConfirm: () => assert.fail('dismiss must not confirm'),
+        }) : null });
+        try {
+            await settle(); const dialog = document.querySelector('.destructive-confirm-backdrop');
+            assert.equal(dialog.querySelector('.destructive-confirm-submit').disabled, true);
+            dialog.click(); await settle();
+            assert.equal(document.querySelector('.destructive-confirm-backdrop'), dialog, 'outside clicks keep the confirmation open');
+            if (dismiss === 'escape') dialog.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            else {
+                const button = dialog.querySelector(dismiss === 'x' ? '.close-button' : '.secondary-button');
+                assert.equal(button.disabled, false); button.click();
+            }
+            await settle(); assert.equal(document.querySelector('.destructive-confirm-backdrop'), null, dismiss);
+        } finally { view.unmount(); }
+    }
+});
+
+test('category forms can be dismissed during a pending save without reopening on completion', async () => {
+    for (const dismiss of ['cancel', 'x']) {
+        const pending = deferred();
+        const view = await mountView('views/categories/Index.vue', '/categories', {
+            get: async () => ({ data: { data: [] } }), post: () => pending.promise,
+        }, { id: 7, permissions: { 'products.view': true, 'products.create': true } });
+        try {
+            await settle(); view.root.querySelector('.page-heading .primary-button').click(); await settle();
+            const form = view.root.querySelector('form.modal-card');
+            change(form.querySelector('input'), 'Pending category'); submit(form); await settle();
+            const button = form.querySelector(dismiss === 'x' ? '.close-button' : '.modal-actions .secondary-button');
+            assert.equal(button.disabled, false); button.click(); await settle();
+            assert.equal(view.root.querySelector('.modal-backdrop'), null);
+            pending.resolve({}); await settle();
+            assert.equal(view.root.querySelector('.modal-backdrop'), null);
+        } finally { view.unmount(); }
+    }
+});
+
 test('overlapping catalog edits keep the latest record ID paired with its own form data', async () => {
     const first = deferred(); const second = deferred(); const updates = [];
     const records = [{ id: 1, name: 'First branch', active: true }, { id: 2, name: 'Second branch', active: true }];
