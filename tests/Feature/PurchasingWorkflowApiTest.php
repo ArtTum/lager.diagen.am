@@ -17,6 +17,7 @@ use App\Models\StockRequest;
 use App\Models\StockRequestItem;
 use App\Models\Supplier;
 use App\Models\User;
+use App\Services\PurchasingService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -298,6 +299,88 @@ class PurchasingWorkflowApiTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_new_purchase_orders_download_as_pdf_before_and_after_approval_without_mutations(): void
+    {
+        [$actor, $orderId] = $this->documentOrder();
+        $order = PurchaseOrder::query()->findOrFail($orderId);
+        $before = $order->toArray();
+        $audits = \App\Models\AuditLog::query()->count();
+        $pdf = $this->getJson("/api/purchases/{$orderId}/pdf");
+        $pdf->assertOk()->assertHeader('Content-Type', 'application/pdf')
+            ->assertHeader('Content-Disposition', 'attachment; filename="purchase-order-'.$orderId.'.pdf"');
+        self::assertStringStartsWith('%PDF-', $pdf->getContent());
+        self::assertGreaterThan(5000, strlen($pdf->getContent()));
+        self::assertStringContainsString('no-store', $pdf->headers->get('Cache-Control'));
+        self::assertSame($before, $order->fresh()->toArray());
+        self::assertSame($audits, \App\Models\AuditLog::query()->count());
+        self::assertSame(0, Receipt::query()->count());
+        self::assertSame(0, Movement::query()->count());
+
+        $this->postJson("/api/purchases/{$orderId}/approve")->assertOk();
+        $approved = $order->fresh()->toArray();
+        $this->getJson("/api/purchases/{$orderId}/pdf")->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        self::assertSame($approved, $order->fresh()->toArray());
+        self::assertSame($audits + 1, \App\Models\AuditLog::query()->count());
+        self::assertSame((int) $actor->id, (int) $order->fresh()->approved_by);
+    }
+
+    public function test_purchase_documents_use_order_prices_ordered_quantities_and_exact_line_totals(): void
+    {
+        [, $orderId] = $this->documentOrder();
+        $order = PurchaseOrder::query()->findOrFail($orderId);
+        $order->items()->first()->update(['received_qty' => 1]);
+        $order->supplier()->update(['active' => false]);
+        $document = app(PurchasingService::class)->document($orderId);
+        self::assertSame('25.77', $document['lines'][0]['amount']);
+        self::assertSame('0.01', $document['lines'][1]['amount']);
+        self::assertSame('25.78', $document['total']);
+        self::assertSame('2.345', $document['lines'][0]['qty']);
+        self::assertSame('10.99', $document['lines'][0]['unit_cost']);
+        self::assertNull($document['lines'][1]['code']);
+        self::assertSame('10.10.2026', $document['ordered_on']);
+        self::assertNull($document['expected_on']);
+        self::assertSame('Սպասում է հաստատման', $document['status']);
+        self::assertSame('12345678', $document['supplier']['tax_id']);
+        self::assertSame('Երևան, Կոմիտաս 12', $document['supplier']['address']);
+        self::assertSame('PDF buyer', $document['creator']);
+        self::assertSame("Առաքել կենտրոնական պահեստ։\n<test> & տվյալներ", $document['note']);
+        $this->getJson("/api/purchases/{$orderId}/pdf")->assertOk();
+    }
+
+    public function test_purchase_pdf_requires_an_active_purchase_viewer_and_an_existing_order(): void
+    {
+        $this->getJson('/api/purchases/999/pdf')->assertUnauthorized();
+        [$actor, $orderId] = $this->documentOrder();
+        $this->getJson('/api/purchases/999999/pdf')->assertNotFound();
+        $this->getJson('/api/purchases/invalid/pdf')->assertNotFound();
+        $central = $actor->branch;
+        $viewer = $this->persistedActor($central, 'pdf-viewer', 'pdf-viewer@example.test', ['purchases.view']);
+        $this->actingAs($viewer, 'sanctum')->getJson("/api/purchases/{$orderId}/pdf")->assertOk();
+        $receiver = $this->persistedActor($central, 'pdf-receiver', 'pdf-receiver@example.test', ['receipts.view']);
+        $this->actingAs($receiver, 'sanctum')->getJson("/api/purchases/{$orderId}/pdf")->assertForbidden();
+        $actor->update(['active' => false]);
+        $this->actingAs($actor->fresh(), 'sanctum')->getJson("/api/purchases/{$orderId}/pdf")->assertUnauthorized();
+    }
+
+    private function documentOrder(): array
+    {
+        $central = Branch::query()->create(['name' => 'Central', 'code' => 'CENTRAL', 'active' => true]);
+        $actor = $this->persistedActor($central, 'pdf-buyer', 'pdf-buyer@example.test', ['purchases.view', 'purchases.create', 'purchases.approve']);
+        $actor->update(['name' => 'PDF buyer']);
+        $supplier = Supplier::query()->create(['name' => 'Հայկական մատակարար', 'tax_id' => '12345678', 'address' => 'Երևան, Կոմիտաս 12', 'active' => true]);
+        $items = [];
+        foreach ([['PDF-001', 2.345, 10.99], [null, 0.001, 5.00]] as [$code, $qty, $cost]) {
+            $product = Product::query()->create(['code' => $code, 'name' => 'Լաբորատոր նյութ', 'unit' => 'հատ', 'purchase_price' => 999, 'lot_control' => false, 'expiry_control' => false, 'active' => true]);
+            $items[] = ['product_id' => $product->id, 'qty' => $qty, 'unit_cost' => $cost];
+        }
+        $response = $this->actingAs($actor->fresh(), 'sanctum')->postJson('/api/purchases', [
+            'supplier_id' => $supplier->id, 'ordered_on' => '2026-10-10', 'expected_on' => null,
+            'note' => "Առաքել կենտրոնական պահեստ։\n<test> & տվյալներ", 'items' => $items,
+        ])->assertCreated();
+
+        return [$actor->fresh(), (int) $response->json('data.id')];
+    }
+
     private function centralActor(Branch $branch): User
     {
         $role = Role::query()->create(['name' => 'admin', 'title' => 'Համակարգի ադմինիստրատոր']);
@@ -375,11 +458,14 @@ class PurchasingWorkflowApiTest extends TestCase
         Schema::create('suppliers', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
+            foreach (['tax_id', 'address', 'contact_name', 'phone', 'email', 'contract_no'] as $column) {
+                $table->string($column)->nullable();
+            }
             $table->boolean('active');
         });
         Schema::create('products', function (Blueprint $table): void {
             $table->id();
-            $table->string('code');
+            $table->string('code')->nullable();
             $table->string('name');
             $table->string('unit');
             $table->decimal('purchase_price', 14, 2);

@@ -65,6 +65,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function (): void {
     Route::get('/purchasing/purchases/options', [PurchaseController::class, 'options'])->defaults('kind', 'purchases')->middleware('permission:purchases.view');
     Route::get('/purchasing/receipts/options', [PurchaseController::class, 'options'])->defaults('kind', 'receipts')->middleware('permission:receipts.view');
     Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create');
+    Route::get('/purchases/{order}/pdf', [PurchaseController::class, 'downloadPdf'])->whereNumber('order')->middleware('permission:purchases.view');
     Route::post('/purchases/{order}/approve', [PurchaseController::class, 'approve'])->middleware('permission:purchases.approve');
     Route::post('/receipts', [PurchaseController::class, 'receive'])->middleware('permission:receipts.create');
     Route::get('/catalog/stock/options', [CatalogController::class, 'options'])->defaults('kind', 'stock')->middleware('permission:stock.view');

@@ -79,6 +79,14 @@ class PurchasingRepository
         return PurchaseOrder::query()->find($id);
     }
 
+    public function orderForDocument(int $id): PurchaseOrder
+    {
+        return PurchaseOrder::query()->with([
+            'supplier', 'creator:id,name',
+            'items' => fn ($items) => $items->with('product:id,code,name,unit')->orderBy('id'),
+        ])->findOrFail($id);
+    }
+
     public function orderItemForUpdate(int $id, int $orderId): ?PurchaseOrderItem
     {
         return PurchaseOrderItem::query()->with('product')->whereKey($id)->where('purchase_order_id', $orderId)->lockForUpdate()->first();

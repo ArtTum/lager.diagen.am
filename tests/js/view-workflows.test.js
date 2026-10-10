@@ -492,6 +492,74 @@ test('purchase and receipt saves from a previous account cannot close or overwri
     }
 });
 
+test('purchase PDF controls download pending and approved orders without requiring write permissions', async () => {
+    const downloads = [], requests = [], revoked = [];
+    const createUrl = URL.createObjectURL, revokeUrl = URL.revokeObjectURL;
+    const click = dom.window.HTMLAnchorElement.prototype.click;
+    const setTimeout = window.setTimeout;
+    URL.createObjectURL = () => 'blob:purchase-pdf';
+    URL.revokeObjectURL = (url) => revoked.push(url);
+    dom.window.HTMLAnchorElement.prototype.click = function () { downloads.push({ filename: this.download, href: this.href }); };
+    window.setTimeout = (callback) => { callback(); return 0; };
+    const records = ['pending', 'approved', 'cancelled'].map((status, index) => ({ id: index + 1, order_no: `ՊԱՏ-${index + 1}`, status }));
+    const view = await mountView('views/purchasing/Index.vue', '/purchases', {
+        async get(endpoint, config) {
+            if (endpoint === 'pages/purchases') return list(records, { order_no: 'Order' });
+            requests.push({ endpoint, config }); return { data: new Blob(['%PDF-test'], { type: 'application/pdf' }) };
+        },
+        async post() { assert.fail('PDF downloads must not write'); },
+    }, { id: 7, permissions: { 'purchases.view': true } });
+    try {
+        await settle(); const buttons = view.root.querySelectorAll('.purchase-pdf-button');
+        assert.equal(buttons.length, 3);
+        assert.equal(view.root.querySelector('tbody button:not(.purchase-pdf-button)'), null);
+        for (const button of buttons) { button.click(); await settle(); }
+        assert.deepEqual(requests.map(({ endpoint }) => endpoint), ['purchases/1/pdf', 'purchases/2/pdf', 'purchases/3/pdf']);
+        assert.ok(requests.every(({ config }) => config.responseType === 'blob'));
+        assert.deepEqual(downloads.map(({ filename }) => filename), ['ՊԱՏ-1.pdf', 'ՊԱՏ-2.pdf', 'ՊԱՏ-3.pdf']);
+        assert.equal(revoked.length, 3);
+    } finally {
+        view.unmount(); URL.createObjectURL = createUrl; URL.revokeObjectURL = revokeUrl;
+        dom.window.HTMLAnchorElement.prototype.click = click; window.setTimeout = setTimeout;
+    }
+});
+
+test('purchase PDF responses cannot download after account or permission changes', async () => {
+    const createUrl = URL.createObjectURL;
+    URL.createObjectURL = () => assert.fail('an old account PDF must not be downloaded');
+    try {
+        for (const revoke of [false, true]) {
+            const pending = deferred();
+            const user = { id: 7, permissions: { 'purchases.view': true } };
+            const view = await mountView('views/purchasing/Index.vue', '/purchases', {
+                get: (endpoint) => endpoint === 'pages/purchases' ? Promise.resolve(list([{ id: 1, order_no: 'OLD' }])) : pending.promise,
+            }, user);
+            try {
+                await settle(); const button = view.root.querySelector('.purchase-pdf-button');
+                button.click(); await settle(); assert.equal(button.disabled, true);
+                window.dispatchEvent(new CustomEvent('lager:user', { detail: revoke ? { ...user, permissions: {} } : { ...user, id: 8 } })); await settle();
+                pending.resolve({ data: new Blob(['%PDF-old']) }); await settle();
+                assert.equal(view.root.querySelector('.alert-error'), null);
+                assert.equal(view.root.querySelector('.purchase-pdf-button')?.disabled ?? false, false);
+            } finally { view.unmount(); }
+        }
+    } finally { URL.createObjectURL = createUrl; }
+});
+
+test('purchase PDF download errors show the server message from a JSON blob', async () => {
+    const view = await mountView('views/purchasing/Index.vue', '/purchases', {
+        async get(endpoint) {
+            if (endpoint === 'pages/purchases') return list([{ id: 1, order_no: 'ORDER' }]);
+            throw { response: { data: new Blob([JSON.stringify({ message: 'Պատվերը չի գտնվել։' })]) } };
+        },
+    }, { id: 7, permissions: { 'purchases.view': true } });
+    try {
+        await settle(); view.root.querySelector('.purchase-pdf-button').click(); await settle();
+        assert.match(view.root.querySelector('.alert-error').textContent, /Պատվերը չի գտնվել/);
+        assert.equal(view.root.querySelector('.purchase-pdf-button').disabled, false);
+    } finally { view.unmount(); }
+});
+
 test('purchase approvals revalidate current permission and pending status before posting', async () => {
     const writes = [];
     let row = { id: 1, order_no: 'ORDER-1', status: 'pending' };
@@ -504,7 +572,8 @@ test('purchase approvals revalidate current permission and pending status before
         await settle(); view.root.querySelector('tbody button').click(); await settle();
         window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, permissions: { 'purchases.view': true } } })); await settle();
         assert.equal(view.root.querySelector('.confirm-card'), null);
-        assert.equal(view.root.querySelector('tbody button'), null);
+        assert.equal(view.root.querySelector('tbody button:not(.purchase-pdf-button)'), null);
+        assert.ok(view.root.querySelector('.purchase-pdf-button'));
         window.dispatchEvent(new CustomEvent('lager:user', { detail: user })); await settle();
         view.root.querySelector('tbody button').click(); await settle();
         row = { ...row, status: 'approved' };
@@ -523,11 +592,11 @@ test('a delayed purchase approval cannot close the next account confirmation or 
         post(endpoint) { writes.push(endpoint); return pending.promise; },
     }, user);
     try {
-        await settle(); view.root.querySelectorAll('tbody button')[0].click(); await settle();
+        await settle(); view.root.querySelectorAll('tbody button:not(.purchase-pdf-button)')[0].click(); await settle();
         view.root.querySelector('.confirm-card .primary-button').click(); await settle();
         assert.deepEqual(writes, ['purchases/1/approve']);
         window.dispatchEvent(new CustomEvent('lager:user', { detail: { ...user, id: 8 } })); await settle();
-        view.root.querySelectorAll('tbody button')[1].click(); await settle();
+        view.root.querySelectorAll('tbody button:not(.purchase-pdf-button)')[1].click(); await settle();
         const current = view.root.querySelector('.confirm-card');
         assert.match(current.textContent, /ORDER-2/);
         pending.resolve({}); await settle();
@@ -1401,7 +1470,7 @@ test('the same approved API code keeps its purchase and transfer meaning in badg
             assert.equal(select.querySelector('option[value="approved"]').textContent, label);
             change(select, 'approved'); submit(view.root.querySelector('.list-filter-bar')); await settle();
             assert.equal(calls.at(-1).status, 'approved');
-            assert.equal(view.root.querySelector('tbody button'), null, 'status context does not change view-only action permissions');
+            assert.equal(view.root.querySelector('tbody button:not(.purchase-pdf-button)'), null, 'status context does not change write permissions');
         } finally { view.unmount(); }
     }
 });

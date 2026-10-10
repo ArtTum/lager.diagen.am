@@ -4,6 +4,9 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\PurchasingRepository;
+use App\Support\WorkflowStatus;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -16,6 +19,37 @@ class PurchasingService
         abort_unless(in_array($kind, ['purchases', 'receipts'], true), 404);
 
         return $this->purchasing->options($kind === 'receipts');
+    }
+
+    public function document(int $orderId): array
+    {
+        $order = $this->purchasing->orderForDocument($orderId);
+        $total = BigDecimal::zero()->toScale(2);
+        $lines = [];
+        foreach ($order->items as $item) {
+            // Sum the displayed, rounded line amounts using exact decimal arithmetic.
+            $amount = BigDecimal::of($item->ordered_qty)->multipliedBy($item->unit_cost)->toScale(2, RoundingMode::HalfUp);
+            $total = $total->plus($amount);
+            $lines[] = [
+                'code' => $item->product?->code,
+                'name' => $item->product?->name ?? 'Ապրանքը հասանելի չէ',
+                'unit' => $item->product?->unit ?? '',
+                'qty' => (string) $item->ordered_qty,
+                'unit_cost' => (string) $item->unit_cost,
+                'amount' => (string) $amount,
+            ];
+        }
+
+        return [
+            'id' => (int) $order->id, 'order_no' => $order->order_no,
+            'status' => WorkflowStatus::label('purchases', $order->status),
+            'ordered_on' => $order->ordered_on?->format('d.m.Y'),
+            'expected_on' => $order->expected_on?->format('d.m.Y'),
+            'approved_at' => $order->approved_at?->format('d.m.Y H:i'),
+            'creator' => $order->creator?->name,
+            'supplier' => $order->supplier?->only(['name', 'tax_id', 'address', 'contact_name', 'phone', 'email', 'contract_no']) ?? [],
+            'note' => $order->note, 'lines' => $lines, 'total' => (string) $total,
+        ];
     }
 
     public function createOrder(User $actor, string $ip, array $data): array
